@@ -1,6 +1,6 @@
 import requests
-
-BASE_URL = "http://localhost:8000"
+import os
+BASE_URL = os.getenv("API_BASE_URL", "https://promptro-backend.onrender.com")
 
 def update_banners():
     print("Updating Banners with better images and layout...")

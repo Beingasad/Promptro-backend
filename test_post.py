@@ -1,6 +1,7 @@
 import requests
-
-url = "http://127.0.0.1:8000/api/prompts"
+import os
+BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+url = f"{BASE_URL}/api/prompts"
 files = {
     'image': ('test.jpg', b'fake image data', 'image/jpeg')
 }
