@@ -96,20 +96,36 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
 
     if is_cloudinary_configured:
         try:
+            # Read file content
+            content = await image.read()
             # Upload to Cloudinary
-            result = cloudinary.uploader.upload(image.file)
-            return result.get("secure_url", fallback_url)
+            result = cloudinary.uploader.upload(content)
+            url = result.get("secure_url")
+            if url:
+                return url
+            # If no secure_url, reset for local fallback
+            await image.seek(0)
         except Exception as e:
             print(f"Cloudinary upload error: {e}")
-            # If in production, we should probably fail or use the fallback
-            # but never save to local disk on Render if possible.
+            await image.seek(0)
 
     # Fallback to local storage (only recommended for local dev)
     try:
+        # Check if we have a valid filename
+        if not image.filename:
+            return fallback_url
+            
         extension = Path(image.filename).suffix or ".jpg"
         filename = f"{uuid.uuid4()}{extension}"
         upload_path = UPLOAD_DIR / filename
-        upload_path.write_bytes(await image.read())
+        
+        # Ensure we are at the start of the file
+        content = await image.read()
+        if not content:
+            # This happens if we didn't seek(0) correctly
+            return fallback_url
+            
+        upload_path.write_bytes(content)
         
         # Use BACKEND_URL for absolute paths, fallback to localhost for dev
         backend_url = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip('/')
@@ -155,14 +171,18 @@ async def create_prompt(
     trending: str = Form("false"),
     visibility: str = Form("Public"),
     aspectRatio: str = Form(None),
-    image: UploadFile = File(...),
+    image_url: str = Form(None),
+    image: UploadFile | None = File(None),
     db: Session = Depends(get_db)
 ):
     try:
         is_featured = featured.lower() == "true"
         is_trending = trending.lower() == "true"
-        print(f"Creating prompt: {title} ({category}), Featured: {is_featured}")
-        image_url = await resolve_image_url(image, "https://images.unsplash.com/photo-1605806616949-1e87b487cb2a?q=80&w=1000&auto=format&fit=crop")
+        
+        final_image_url = image_url or "https://images.unsplash.com/photo-1605806616949-1e87b487cb2a?q=80&w=1000&auto=format&fit=crop"
+        
+        if image and image.filename:
+            final_image_url = await resolve_image_url(image, final_image_url)
 
         tag_list = [tag.strip() for tag in tags.split(",")] if tags else []
 
@@ -174,7 +194,7 @@ async def create_prompt(
             category=category,
             model=model,
             tags=tag_list,
-            image_url=image_url,
+            image_url=final_image_url,
             aspect_ratio=aspectRatio,
             featured=is_featured,
             trending=is_trending,
@@ -201,6 +221,7 @@ async def update_prompt(
     trending: str = Form(None),
     visibility: str = Form(None),
     aspectRatio: str = Form(None),
+    image_url: str = Form(None),
     image: UploadFile | None = File(None),
     db: Session = Depends(get_db)
 ):
@@ -225,8 +246,10 @@ async def update_prompt(
         if aspectRatio is not None:
             prompt.aspect_ratio = aspectRatio
         
-        if image:
+        if image and image.filename:
             prompt.image_url = await resolve_image_url(image, prompt.image_url)
+        elif image_url:
+            prompt.image_url = image_url
 
         db.commit()
         db.refresh(prompt)
