@@ -94,6 +94,12 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
         os.getenv("CLOUDINARY_URL")
     )
 
+    is_cloudinary_configured = all([
+        os.getenv("CLOUDINARY_CLOUD_NAME"),
+        os.getenv("CLOUDINARY_API_KEY"),
+        os.getenv("CLOUDINARY_API_SECRET")
+    ])
+
     if is_cloudinary_configured:
         try:
             # Read file content
@@ -102,16 +108,18 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
             result = cloudinary.uploader.upload(content)
             url = result.get("secure_url")
             if url:
+                print(f"DEBUG: Successfully uploaded to Cloudinary: {url}")
                 return url
             # If no secure_url, reset for local fallback
             await image.seek(0)
         except Exception as e:
-            print(f"Cloudinary upload error: {e}")
+            print(f"ERROR: Cloudinary upload failed: {e}")
             await image.seek(0)
+    else:
+        print("WARNING: Cloudinary is NOT configured. Falling back to local storage (images will DISAPPEAR on Render restarts).")
 
     # Fallback to local storage (only recommended for local dev)
     try:
-        # Check if we have a valid filename
         if not image.filename:
             return fallback_url
             
@@ -119,19 +127,18 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
         filename = f"{uuid.uuid4()}{extension}"
         upload_path = UPLOAD_DIR / filename
         
-        # Ensure we are at the start of the file
         content = await image.read()
         if not content:
-            # This happens if we didn't seek(0) correctly
             return fallback_url
             
         upload_path.write_bytes(content)
         
-        # Use BACKEND_URL for absolute paths, fallback to localhost for dev
         backend_url = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip('/')
-        return f"{backend_url}/uploads/{filename}"
+        final_url = f"{backend_url}/uploads/{filename}"
+        print(f"DEBUG: Saved to local storage: {final_url}")
+        return final_url
     except Exception as e:
-        print(f"Local upload error: {e}")
+        print(f"ERROR: Local upload failed: {e}")
         return fallback_url
 
 @app.get("/")
@@ -203,6 +210,7 @@ async def create_prompt(
         db.add(db_prompt)
         db.commit()
         db.refresh(db_prompt)
+        print(f"DEBUG: Saved prompt to DB with image_url: {db_prompt.image_url}")
         return db_prompt
     except Exception as e:
         print(f"Error creating prompt: {str(e)}")
@@ -253,6 +261,7 @@ async def update_prompt(
 
         db.commit()
         db.refresh(prompt)
+        print(f"DEBUG: Updated prompt in DB with image_url: {prompt.image_url}")
         return prompt
     except Exception as e:
         print(f"Error updating prompt: {str(e)}")
