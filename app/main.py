@@ -451,3 +451,44 @@ def delete_banner(banner_id: int, db: Session = Depends(get_db)):
     db.delete(banner)
     db.commit()
     return {"status": "deleted", "id": banner_id}
+
+@app.get("/api/notifications")
+async def get_notifications(db: Session = Depends(get_db)):
+    notifications = []
+    
+    # 1. Check for featured prompts
+    featured = db.query(models.Prompt).filter(models.Prompt.featured == True).order_by(models.Prompt.created_at.desc()).first()
+    if featured:
+        notifications.append({
+            "id": f"featured-{featured.id}",
+            "text": f"Featured: {featured.title} is trending!",
+            "type": "trending",
+            "link": f"/prompt/{featured.id}"
+        })
+
+    # 2. Check for latest prompts
+    latest = db.query(models.Prompt).order_by(models.Prompt.created_at.desc()).first()
+    if latest:
+        notifications.append({
+            "id": f"latest-{latest.id}",
+            "text": f"New Drop: {latest.title} added to {latest.category}",
+            "type": "update",
+            "link": f"/prompt/{latest.id}"
+        })
+
+    # 3. Random system/style tip
+    tips = [
+        "Pro Tip: Try 'Cinematic' style for realistic portraits",
+        "Your saved board is synced across devices",
+        "Explore 3D CGI category for modern character designs",
+        "Join our community to share your own prompts"
+    ]
+    import random
+    notifications.append({
+        "id": "tip-1",
+        "text": random.choice(tips),
+        "type": "tip",
+        "link": "/explore"
+    })
+
+    return notifications
