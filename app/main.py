@@ -53,39 +53,70 @@ app = FastAPI(title="Promptro API", lifespan=lifespan)
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 # Configure CORS
+allow_origins = [
+    "http://localhost:5173",
+    "https://promptro-frontend.vercel.app",
+    "https://promptro.in",
+    "https://www.promptro.in"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "https://promptro-frontend.vercel.app"
-    ],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configure Cloudinary if vars exist
-if os.getenv("CLOUDINARY_URL"):
+# Configure Cloudinary
+# Prioritize individual keys, fallback to CLOUDINARY_URL
+cloudinary_cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
+cloudinary_api_key = os.getenv("CLOUDINARY_API_KEY")
+cloudinary_api_secret = os.getenv("CLOUDINARY_API_SECRET")
+
+if cloudinary_cloud_name and cloudinary_api_key and cloudinary_api_secret:
     cloudinary.config(
-        cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-        api_key=os.getenv("CLOUDINARY_API_KEY"),
-        api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+        cloud_name=cloudinary_cloud_name,
+        api_key=cloudinary_api_key,
+        api_secret=cloudinary_api_secret,
+        secure=True
     )
+elif os.getenv("CLOUDINARY_URL"):
+    cloudinary.config(secure=True)
 
 async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
     if not image or not image.filename:
         return fallback_url
 
-    if os.getenv("CLOUDINARY_URL"):
-        result = cloudinary.uploader.upload(image.file)
-        return result.get("secure_url", fallback_url)
+    # Always prefer Cloudinary in production
+    is_cloudinary_configured = (
+        (os.getenv("CLOUDINARY_CLOUD_NAME") and os.getenv("CLOUDINARY_API_KEY")) or 
+        os.getenv("CLOUDINARY_URL")
+    )
 
-    extension = Path(image.filename).suffix or ".jpg"
-    filename = f"{uuid.uuid4()}{extension}"
-    upload_path = UPLOAD_DIR / filename
-    upload_path.write_bytes(await image.read())
-    backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
-    return f"{backend_url}/uploads/{filename}"
+    if is_cloudinary_configured:
+        try:
+            # Upload to Cloudinary
+            result = cloudinary.uploader.upload(image.file)
+            return result.get("secure_url", fallback_url)
+        except Exception as e:
+            print(f"Cloudinary upload error: {e}")
+            # If in production, we should probably fail or use the fallback
+            # but never save to local disk on Render if possible.
+
+    # Fallback to local storage (only recommended for local dev)
+    try:
+        extension = Path(image.filename).suffix or ".jpg"
+        filename = f"{uuid.uuid4()}{extension}"
+        upload_path = UPLOAD_DIR / filename
+        upload_path.write_bytes(await image.read())
+        
+        # Use BACKEND_URL for absolute paths, fallback to localhost for dev
+        backend_url = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip('/')
+        return f"{backend_url}/uploads/{filename}"
+    except Exception as e:
+        print(f"Local upload error: {e}")
+        return fallback_url
 
 @app.get("/")
 def read_root():
