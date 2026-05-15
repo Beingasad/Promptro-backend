@@ -53,12 +53,12 @@ app = FastAPI(title="Promptro API", lifespan=lifespan)
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 # Configure CORS
-frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-allow_origins = [frontend_url] if frontend_url != "*" else ["*"]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allow_origins,
+    allow_origins=[
+        "http://localhost:5173",
+        "https://promptro-frontend.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -84,7 +84,8 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
     filename = f"{uuid.uuid4()}{extension}"
     upload_path = UPLOAD_DIR / filename
     upload_path.write_bytes(await image.read())
-    return f"http://localhost:8000/uploads/{filename}"
+    backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+    return f"{backend_url}/uploads/{filename}"
 
 @app.get("/")
 def read_root():
