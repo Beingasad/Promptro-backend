@@ -100,23 +100,28 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
         os.getenv("CLOUDINARY_API_SECRET")
     ])
 
+    # In production (Render), we MUST use Cloudinary.
+    is_production = os.getenv("RENDER") is not None
+    
+    if is_production and not is_cloudinary_configured:
+        print("CRITICAL ERROR: Cloudinary is NOT configured in production! Images will NOT persist.")
+        # We don't raise Exception to avoid crashing the whole process, but we log it clearly.
+
     if is_cloudinary_configured:
         try:
-            # Read file content
             content = await image.read()
-            # Upload to Cloudinary
-            result = cloudinary.uploader.upload(content)
+            # Upload to Cloudinary with a specific folder
+            result = cloudinary.uploader.upload(content, folder="promptro_prompts")
             url = result.get("secure_url")
             if url:
-                print(f"DEBUG: Successfully uploaded to Cloudinary: {url}")
+                print(f"PROD_CHECK: Successfully uploaded to Cloudinary: {url}")
                 return url
-            # If no secure_url, reset for local fallback
             await image.seek(0)
         except Exception as e:
             print(f"ERROR: Cloudinary upload failed: {e}")
             await image.seek(0)
     else:
-        print("WARNING: Cloudinary is NOT configured. Falling back to local storage (images will DISAPPEAR on Render restarts).")
+        print("WARNING: Cloudinary not configured. Using local storage (ephemeral).")
 
     # Fallback to local storage (only recommended for local dev)
     try:
@@ -134,8 +139,11 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
         upload_path.write_bytes(content)
         
         backend_url = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip('/')
+        if not backend_url.startswith('http') and backend_url:
+             backend_url = f"https://{backend_url}"
+             
         final_url = f"{backend_url}/uploads/{filename}"
-        print(f"DEBUG: Saved to local storage: {final_url}")
+        print(f"PROD_CHECK: Local storage URL generated: {final_url}")
         return final_url
     except Exception as e:
         print(f"ERROR: Local upload failed: {e}")
