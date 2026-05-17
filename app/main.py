@@ -161,6 +161,10 @@ def get_prompts(skip: int = 0, limit: int = 20, category: str = None, db: Sessio
     prompts = query.order_by(models.Prompt.created_at.desc()).offset(skip).limit(limit).all()
     return prompts
 
+@app.get("/api/prompts/count")
+def get_prompts_count(db: Session = Depends(get_db)):
+    return {"count": db.query(models.Prompt).count()}
+
 @app.get("/api/prompts/{prompt_id}", response_model=schemas.PromptOut)
 def get_prompt(prompt_id: str, db: Session = Depends(get_db)):
     prompt = db.query(models.Prompt).filter(models.Prompt.id == prompt_id).first()
