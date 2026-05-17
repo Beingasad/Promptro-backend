@@ -88,24 +88,26 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
     if not image or not image.filename:
         return fallback_url
 
-    # Always prefer Cloudinary in production
-    is_cloudinary_configured = (
-        (os.getenv("CLOUDINARY_CLOUD_NAME") and os.getenv("CLOUDINARY_API_KEY")) or 
-        os.getenv("CLOUDINARY_URL")
-    )
+    # Check Cloudinary configuration
+    cloudinary_cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
+    cloudinary_api_key = os.getenv("CLOUDINARY_API_KEY")
+    cloudinary_api_secret = os.getenv("CLOUDINARY_API_SECRET")
+    cloudinary_url = os.getenv("CLOUDINARY_URL")
 
-    is_cloudinary_configured = all([
-        os.getenv("CLOUDINARY_CLOUD_NAME"),
-        os.getenv("CLOUDINARY_API_KEY"),
-        os.getenv("CLOUDINARY_API_SECRET")
-    ])
+    is_cloudinary_configured = False
+    if cloudinary_cloud_name and cloudinary_api_key and cloudinary_api_secret:
+        is_cloudinary_configured = True
+    elif cloudinary_url:
+        is_cloudinary_configured = True
 
     # In production (Render), we MUST use Cloudinary.
     is_production = os.getenv("RENDER") is not None
-    
+
     if is_production and not is_cloudinary_configured:
-        print("CRITICAL ERROR: Cloudinary is NOT configured in production! Images will NOT persist.")
-        # We don't raise Exception to avoid crashing the whole process, but we log it clearly.
+        raise HTTPException(
+            status_code=500,
+            detail="CRITICAL CONFIGURATION ERROR: Cloudinary is NOT configured in production environment! Image upload failed."
+        )
 
     if is_cloudinary_configured:
         try:
@@ -114,20 +116,27 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
             result = cloudinary.uploader.upload(content, folder="promptro_prompts")
             url = result.get("secure_url")
             if url:
-                print(f"PROD_CHECK: Successfully uploaded to Cloudinary: {url}")
+                # Force absolute HTTPS Cloudinary URL
+                if not url.startswith("https://"):
+                    url = url.replace("http://", "https://")
+                
+                # Print saved image_url after successful upload
+                print(f"CLOUDINARY_UPLOAD_SUCCESS: Successfully uploaded prompt image to Cloudinary. URL: {url}")
                 return url
-            await image.seek(0)
+            else:
+                raise ValueError("Cloudinary upload succeeded but returned no secure_url")
         except Exception as e:
-            print(f"ERROR: Cloudinary upload failed: {e}")
-            await image.seek(0)
+            # If Cloudinary upload fails, raise error instead of silently saving local image
+            print(f"CLOUDINARY_UPLOAD_FAILED: Error during Cloudinary upload: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Production image upload to Cloudinary failed: {str(e)}"
+            )
     else:
         print("WARNING: Cloudinary not configured. Using local storage (ephemeral).")
 
-    # Fallback to local storage (only recommended for local dev)
+    # Local development fallback (strictly prohibited in production)
     try:
-        if not image.filename:
-            return fallback_url
-            
         extension = Path(image.filename).suffix or ".jpg"
         filename = f"{uuid.uuid4()}{extension}"
         upload_path = UPLOAD_DIR / filename
@@ -143,11 +152,14 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
              backend_url = f"https://{backend_url}"
              
         final_url = f"{backend_url}/uploads/{filename}"
-        print(f"PROD_CHECK: Local storage URL generated: {final_url}")
+        print(f"LOCAL_UPLOAD_SUCCESS: Local storage URL generated: {final_url}")
         return final_url
     except Exception as e:
         print(f"ERROR: Local upload failed: {e}")
-        return fallback_url
+        raise HTTPException(
+            status_code=500,
+            detail=f"Local image upload failed: {str(e)}"
+        )
 
 @app.get("/")
 def read_root():
