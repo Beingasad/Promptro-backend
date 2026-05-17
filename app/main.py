@@ -333,6 +333,9 @@ async def create_category(
         db.commit()
         db.refresh(db_category)
         return db_category
+    except HTTPException as he:
+        db.rollback()
+        raise he
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail="Category already exists or invalid data")
