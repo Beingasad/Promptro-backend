@@ -519,34 +519,3 @@ async def get_notifications(db: Session = Depends(get_db)):
     })
 
     return notifications
-
-@app.get("/api/users/{user_id}/activity", response_model=schemas.UserActivityOut)
-def get_user_activity(user_id: str, db: Session = Depends(get_db)):
-    activity = db.query(models.UserActivity).filter(models.UserActivity.user_id == user_id).first()
-    if not activity:
-        return models.UserActivity(
-            user_id=user_id,
-            saved_prompts=[],
-            liked_prompts=[],
-            recent_prompts=[]
-        )
-    return activity
-
-@app.post("/api/users/{user_id}/activity", response_model=schemas.UserActivityOut)
-def save_user_activity(user_id: str, activity_data: schemas.UserActivityCreate, db: Session = Depends(get_db)):
-    db_activity = db.query(models.UserActivity).filter(models.UserActivity.user_id == user_id).first()
-    if not db_activity:
-        db_activity = models.UserActivity(
-            user_id=user_id,
-            saved_prompts=activity_data.saved_prompts,
-            liked_prompts=activity_data.liked_prompts,
-            recent_prompts=activity_data.recent_prompts
-        )
-        db.add(db_activity)
-    else:
-        db_activity.saved_prompts = activity_data.saved_prompts
-        db_activity.liked_prompts = activity_data.liked_prompts
-        db_activity.recent_prompts = activity_data.recent_prompts
-    db.commit()
-    db.refresh(db_activity)
-    return db_activity

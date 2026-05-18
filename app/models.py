@@ -37,15 +37,6 @@ class SavedPrompt(Base):
     user_id = Column(String, index=True, default="local_user")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-class UserActivity(Base):
-    __tablename__ = "user_activities"
-
-    user_id = Column(String, primary_key=True, index=True)
-    saved_prompts = Column(JSON, nullable=True)
-    liked_prompts = Column(JSON, nullable=True)
-    recent_prompts = Column(JSON, nullable=True)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
 class Feedback(Base):
     __tablename__ = "feedbacks"
 
