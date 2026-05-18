@@ -519,3 +519,43 @@ async def get_notifications(db: Session = Depends(get_db)):
     })
 
     return notifications
+
+@app.get("/api/users/{user_id}/activity", response_model=schemas.UserActivityOut)
+def get_user_activity(user_id: str, db: Session = Depends(get_db)):
+    activity = db.query(models.UserActivity).filter(models.UserActivity.user_id == user_id).first()
+    if not activity:
+        import datetime
+        return {
+            "user_id": user_id,
+            "saved_prompts": [],
+            "liked_prompts": [],
+            "recent_prompts": [],
+            "updated_at": datetime.datetime.utcnow()
+        }
+    return activity
+
+@app.post("/api/users/{user_id}/activity", response_model=schemas.UserActivityOut)
+def save_user_activity(
+    user_id: str,
+    activity_data: schemas.UserActivityCreate,
+    db: Session = Depends(get_db)
+):
+    activity = db.query(models.UserActivity).filter(models.UserActivity.user_id == user_id).first()
+    if not activity:
+        activity = models.UserActivity(
+            user_id=user_id,
+            saved_prompts=activity_data.saved_prompts,
+            liked_prompts=activity_data.liked_prompts,
+            recent_prompts=activity_data.recent_prompts
+        )
+        db.add(activity)
+    else:
+        activity.saved_prompts = activity_data.saved_prompts
+        activity.liked_prompts = activity_data.liked_prompts
+        activity.recent_prompts = activity_data.recent_prompts
+        import datetime
+        activity.updated_at = datetime.datetime.utcnow()
+        
+    db.commit()
+    db.refresh(activity)
+    return activity
