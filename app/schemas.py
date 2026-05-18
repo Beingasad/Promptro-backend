@@ -43,6 +43,21 @@ class SavedPromptOut(BaseModel):
     class Config:
         from_attributes = True
 
+class UserActivityBase(BaseModel):
+    saved_prompts: Optional[List[dict]] = []
+    liked_prompts: Optional[List[str]] = []
+    recent_prompts: Optional[List[dict]] = []
+
+class UserActivityCreate(UserActivityBase):
+    pass
+
+class UserActivityOut(UserActivityBase):
+    user_id: str
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class CategoryBase(BaseModel):
     name: str
     image_url: Optional[str] = None
