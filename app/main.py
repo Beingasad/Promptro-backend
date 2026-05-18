@@ -488,7 +488,20 @@ def delete_banner(banner_id: int, db: Session = Depends(get_db)):
 async def get_notifications(db: Session = Depends(get_db)):
     notifications = []
     
-    # 1. Check for featured prompts
+    # 1. Fetch manual persistent admin notifications from the database
+    try:
+        manual_notifs = db.query(models.Notification).order_by(models.Notification.created_at.desc()).all()
+        for m in manual_notifs:
+            notifications.append({
+                "id": f"manual-{m.id}",
+                "text": m.text,
+                "type": m.type,
+                "link": m.link
+            })
+    except Exception as e:
+        print("Error fetching manual notifications:", e)
+    
+    # 2. Check for featured prompts
     featured = db.query(models.Prompt).filter(models.Prompt.featured == True).order_by(models.Prompt.created_at.desc()).first()
     if featured:
         notifications.append({
@@ -498,7 +511,7 @@ async def get_notifications(db: Session = Depends(get_db)):
             "link": f"/prompt/{featured.id}"
         })
 
-    # 2. Check for latest prompts
+    # 3. Check for latest prompts
     latest = db.query(models.Prompt).order_by(models.Prompt.created_at.desc()).first()
     if latest:
         notifications.append({
@@ -508,7 +521,15 @@ async def get_notifications(db: Session = Depends(get_db)):
             "link": f"/prompt/{latest.id}"
         })
 
-    # 3. Random system/style tip
+    # 4. Showcase Creator Feature Announcement
+    notifications.append({
+        "id": "showcase-feature-announcement",
+        "text": "✨ Showcase Creator is live! Build beautiful story posters from your saved prompts.",
+        "type": "new-feature",
+        "link": "/saved"
+    })
+
+    # 5. Random system/style tip
     tips = [
         "Pro Tip: Try 'Cinematic' style for realistic portraits",
         "Your saved board is synced across devices",
@@ -524,6 +545,31 @@ async def get_notifications(db: Session = Depends(get_db)):
     })
 
     return notifications
+
+@app.get("/api/notifications-admin")
+def get_admin_notifications(db: Session = Depends(get_db)):
+    return db.query(models.Notification).order_by(models.Notification.created_at.desc()).all()
+
+@app.post("/api/notifications", response_model=schemas.NotificationOut)
+def create_notification(notification: schemas.NotificationCreate, db: Session = Depends(get_db)):
+    db_notification = models.Notification(
+        text=notification.text,
+        type=notification.type,
+        link=notification.link
+    )
+    db.add(db_notification)
+    db.commit()
+    db.refresh(db_notification)
+    return db_notification
+
+@app.delete("/api/notifications/{notification_id}")
+def delete_notification(notification_id: int, db: Session = Depends(get_db)):
+    db_notif = db.query(models.Notification).filter(models.Notification.id == notification_id).first()
+    if not db_notif:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    db.delete(db_notif)
+    db.commit()
+    return {"status": "deleted", "id": notification_id}
 
 @app.get("/api/users/{user_id}/activity", response_model=schemas.UserActivityOut)
 def get_user_activity(user_id: str, db: Session = Depends(get_db)):

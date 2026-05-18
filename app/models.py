@@ -71,3 +71,12 @@ class Banner(Base):
     bg_gradient = Column(String)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    text = Column(String)
+    type = Column(String, default="info")
+    link = Column(String, default="/explore")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

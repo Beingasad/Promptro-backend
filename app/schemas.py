@@ -117,3 +117,15 @@ class BannerOut(BannerBase):
 
     class Config:
         from_attributes = True
+
+class NotificationCreate(BaseModel):
+    text: str
+    type: Optional[str] = "info"
+    link: Optional[str] = "/explore"
+
+class NotificationOut(NotificationCreate):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
