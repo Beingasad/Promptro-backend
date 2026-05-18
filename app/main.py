@@ -166,11 +166,16 @@ def read_root():
     return {"status": "ok", "message": "Promptro API is running"}
 
 @app.get("/api/prompts", response_model=list[schemas.PromptOut])
-def get_prompts(skip: int = 0, limit: int = 20, category: str = None, db: Session = Depends(get_db)):
+def get_prompts(skip: int = 0, limit: int = None, category: str = None, db: Session = Depends(get_db)):
     query = db.query(models.Prompt)
     if category and category != "All":
         query = query.filter(models.Prompt.category == category)
-    prompts = query.order_by(models.Prompt.created_at.desc()).offset(skip).limit(limit).all()
+    
+    query = query.order_by(models.Prompt.created_at.desc()).offset(skip)
+    if limit is not None:
+        query = query.limit(limit)
+        
+    prompts = query.all()
     return prompts
 
 @app.get("/api/prompts/count")
