@@ -80,3 +80,13 @@ class Notification(Base):
     type = Column(String, default="info")
     link = Column(String, default="/explore")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class PageVisit(Base):
+    __tablename__ = "page_visits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ip_address = Column(String, index=True)
+    path = Column(String, index=True)
+    referrer = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

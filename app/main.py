@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import Response, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -717,4 +717,80 @@ def sitemap_xml(db: Session = Depends(get_db)):
 def robots_txt():
     txt_content = generate_robots_txt()
     return PlainTextResponse(content=txt_content)
+
+@app.post("/api/analytics/track")
+def track_page_visit(visit_data: schemas.PageVisitCreate, request: Request, db: Session = Depends(get_db)):
+    ip = request.client.host if request.client else "127.0.0.1"
+    user_agent = request.headers.get("user-agent")
+    db_visit = models.PageVisit(
+        ip_address=ip,
+        path=visit_data.path,
+        referrer=visit_data.referrer,
+        user_agent=user_agent
+    )
+    db.add(db_visit)
+    db.commit()
+    return {"status": "success"}
+
+@app.get("/api/analytics/summary", response_model=schemas.AnalyticsSummary)
+def get_analytics_summary(db: Session = Depends(get_db)):
+    from datetime import datetime, time, timedelta
+    
+    total_visits = db.query(models.PageVisit).count()
+    unique_visitors = db.query(models.PageVisit.ip_address).distinct().count()
+    
+    # Current week (Mon to Sun) counts
+    today = datetime.utcnow().date()
+    start_of_week = today - timedelta(days=today.weekday())
+    daily_counts = []
+    for i in range(7):
+        target_day = start_of_week + timedelta(days=i)
+        start_dt = datetime.combine(target_day, time.min)
+        end_dt = datetime.combine(target_day, time.max)
+        count = db.query(models.PageVisit).filter(models.PageVisit.created_at >= start_dt, models.PageVisit.created_at <= end_dt).count()
+        daily_counts.append(count)
+        
+    # Traffic sources
+    direct_count = 0
+    organic_count = 0
+    social_count = 0
+    referral_count = 0
+    
+    visits = db.query(models.PageVisit).all()
+    total = len(visits)
+    if total > 0:
+        for v in visits:
+            ref = (v.referrer or "").lower()
+            if not ref:
+                direct_count += 1
+            elif any(domain in ref for domain in ["google.", "bing.", "yahoo.", "baidu.", "duckduckgo."]):
+                organic_count += 1
+            elif any(domain in ref for domain in ["instagram.com", "facebook.com", "twitter.com", "linkedin.com", "t.co", "youtube.com"]):
+                social_count += 1
+            else:
+                referral_count += 1
+                
+        direct_pct = round((direct_count / total) * 100)
+        organic_pct = round((organic_count / total) * 100)
+        social_pct = round((social_count / total) * 100)
+        referral_pct = round((referral_count / total) * 100)
+    else:
+        direct_pct = 100
+        organic_pct = 0
+        social_pct = 0
+        referral_pct = 0
+        
+    traffic_sources = [
+        {"label": "Direct", "value": f"{direct_pct}%", "color": "bg-primary"},
+        {"label": "Organic Search", "value": f"{organic_pct}%", "color": "bg-blue-400"},
+        {"label": "Social", "value": f"{social_pct}%", "color": "bg-pink-500"},
+        {"label": "Referral", "value": f"{referral_pct}%", "color": "bg-amber-500"}
+    ]
+    
+    return {
+        "totalVisits": total_visits,
+        "uniqueVisitors": unique_visitors,
+        "dailyVisits": daily_counts,
+        "trafficSources": traffic_sources
+    }
 

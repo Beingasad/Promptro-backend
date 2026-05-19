@@ -129,3 +129,13 @@ class NotificationOut(NotificationCreate):
 
     class Config:
         from_attributes = True
+
+class PageVisitCreate(BaseModel):
+    path: str
+    referrer: Optional[str] = None
+
+class AnalyticsSummary(BaseModel):
+    totalVisits: int
+    uniqueVisitors: int
+    dailyVisits: List[int]
+    trafficSources: List[dict]
