@@ -652,8 +652,11 @@ def generate_sitemap_xml(db: Session) -> str:
         {"loc": "https://promptro.in/categories", "priority": "0.8", "changefreq": "weekly"}
     ]
     
-    # Public Prompts
-    prompts = db.query(models.Prompt).filter(models.Prompt.visibility == "Public").all()
+    # Public Prompts (including older ones where visibility might be NULL)
+    from sqlalchemy import or_
+    prompts = db.query(models.Prompt).filter(
+        or_(models.Prompt.visibility == "Public", models.Prompt.visibility.is_(None))
+    ).all()
     for prompt in prompts:
         lastmod = prompt.created_at.strftime("%Y-%m-%d") if prompt.created_at else datetime.utcnow().strftime("%Y-%m-%d")
         urls.append({
