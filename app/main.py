@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import Response, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -47,6 +48,13 @@ async def lifespan(app: FastAPI):
             db.add(models.Category(name=cat["name"], image_url=cat["image_url"]))
         db.commit()
     db.close()
+    try:
+        from app.database import SessionLocal
+        db_session = SessionLocal()
+        write_static_seo_files(db_session)
+        db_session.close()
+    except Exception as e:
+        print(f"Error generating static SEO files on startup: {e}")
     yield
 
 app = FastAPI(title="Promptro API", lifespan=lifespan)
@@ -240,6 +248,13 @@ async def create_prompt(
         db.commit()
         db.refresh(db_prompt)
         print(f"DEBUG: Saved prompt to DB with image_url: {db_prompt.image_url}")
+        
+        # Update static SEO files
+        try:
+            write_static_seo_files(db)
+        except Exception as e:
+            print(f"Error updating static SEO files: {e}")
+            
         return db_prompt
     except Exception as e:
         print(f"Error creating prompt: {str(e)}")
@@ -291,6 +306,13 @@ async def update_prompt(
         db.commit()
         db.refresh(prompt)
         print(f"DEBUG: Updated prompt in DB with image_url: {prompt.image_url}")
+        
+        # Update static SEO files
+        try:
+            write_static_seo_files(db)
+        except Exception as e:
+            print(f"Error updating static SEO files: {e}")
+            
         return prompt
     except Exception as e:
         print(f"Error updating prompt: {str(e)}")
@@ -319,6 +341,13 @@ def delete_prompt(prompt_id: str, db: Session = Depends(get_db)):
 
     db.delete(prompt)
     db.commit()
+    
+    # Update static SEO files
+    try:
+        write_static_seo_files(db)
+    except Exception as e:
+        print(f"Error updating static SEO files: {e}")
+        
     return {"status": "deleted", "id": prompt_id}
 
 @app.get("/api/categories", response_model=list[schemas.CategoryOut])
@@ -526,7 +555,7 @@ async def get_notifications(db: Session = Depends(get_db)):
         "id": "showcase-feature-announcement",
         "text": "✨ Showcase Creator is live! Build beautiful story posters from your saved prompts.",
         "type": "new-feature",
-        "link": "/saved"
+        "link": "#showcase"
     })
 
     # 5. Random system/style tip
@@ -610,3 +639,79 @@ def save_user_activity(
     db.commit()
     db.refresh(activity)
     return activity
+
+# --- SEO ENDPOINTS ---
+
+def generate_sitemap_xml(db: Session) -> str:
+    from datetime import datetime
+    
+    # Base URLs
+    urls = [
+        {"loc": "https://promptro.in/", "priority": "1.0", "changefreq": "daily"},
+        {"loc": "https://promptro.in/explore", "priority": "0.8", "changefreq": "daily"},
+        {"loc": "https://promptro.in/categories", "priority": "0.8", "changefreq": "weekly"}
+    ]
+    
+    # Public Prompts
+    prompts = db.query(models.Prompt).filter(models.Prompt.visibility == "Public").all()
+    for prompt in prompts:
+        lastmod = prompt.created_at.strftime("%Y-%m-%d") if prompt.created_at else datetime.utcnow().strftime("%Y-%m-%d")
+        urls.append({
+            "loc": f"https://promptro.in/prompt/{prompt.id}",
+            "priority": "0.7",
+            "changefreq": "monthly",
+            "lastmod": lastmod
+        })
+        
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    for u in urls:
+        xml += '  <url>\n'
+        xml += f'    <loc>{u["loc"]}</loc>\n'
+        if "lastmod" in u:
+            xml += f'    <lastmod>{u["lastmod"]}</lastmod>\n'
+        xml += f'    <changefreq>{u["changefreq"]}</changefreq>\n'
+        xml += f'    <priority>{u["priority"]}</priority>\n'
+        xml += '  </url>\n'
+    xml += '</urlset>'
+    
+    return xml
+
+def generate_robots_txt() -> str:
+    return (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /admin\n"
+        "Disallow: /auth\n"
+        "Disallow: /saved\n"
+        "Disallow: /asad87\n\n"
+        "Sitemap: https://promptro.in/sitemap.xml\n"
+    )
+
+def write_static_seo_files(db: Session):
+    try:
+        sitemap_content = generate_sitemap_xml(db)
+        robots_content = generate_robots_txt()
+        
+        frontend_public_dir = Path(__file__).resolve().parent.parent.parent / "frontend" / "public"
+        frontend_public_dir.mkdir(parents=True, exist_ok=True)
+        
+        sitemap_path = frontend_public_dir / "sitemap.xml"
+        robots_path = frontend_public_dir / "robots.txt"
+        
+        sitemap_path.write_text(sitemap_content, encoding="utf-8")
+        robots_path.write_text(robots_content, encoding="utf-8")
+        print(f"Successfully generated static SEO files at {frontend_public_dir}")
+    except Exception as e:
+        print(f"Error writing static SEO files: {e}")
+
+@app.get("/sitemap.xml")
+def sitemap_xml(db: Session = Depends(get_db)):
+    xml_content = generate_sitemap_xml(db)
+    return Response(content=xml_content, media_type="application/xml")
+
+@app.get("/robots.txt")
+def robots_txt():
+    txt_content = generate_robots_txt()
+    return PlainTextResponse(content=txt_content)
+
