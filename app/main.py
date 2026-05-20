@@ -92,9 +92,128 @@ if cloudinary_cloud_name and cloudinary_api_key and cloudinary_api_secret:
 elif os.getenv("CLOUDINARY_URL"):
     cloudinary.config(secure=True)
 
+def compress_image_to_500kb(image_bytes: bytes, filename: str) -> bytes:
+    import io
+    from PIL import Image
+    
+    # Target size is 500 KB (512,000 bytes)
+    target_size_bytes = 500 * 1024
+    
+    # If already smaller, don't touch it
+    if len(image_bytes) <= target_size_bytes:
+        return image_bytes
+        
+    print(f"IMAGE_COMPRESSION: Original size: {len(image_bytes) / 1024:.2f} KB. Compressing to < 500 KB...")
+    
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+    except Exception as e:
+        print(f"IMAGE_COMPRESSION_ERROR: Could not open image: {e}")
+        return image_bytes
+
+    original_format = img.format if img.format else "JPEG"
+    save_format = original_format
+    if save_format not in ["JPEG", "PNG", "WEBP"]:
+        save_format = "JPEG"
+        
+    # Convert alpha channel/palette modes for JPEG if necessary
+    if save_format == "JPEG" and img.mode in ("RGBA", "LA"):
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[3])
+        img = background
+    elif save_format == "JPEG" and img.mode != "RGB":
+        img = img.convert("RGB")
+
+    # Step 1: Quality adjustment for JPEG or WEBP
+    quality = 90
+    output = io.BytesIO()
+    
+    if save_format in ["JPEG", "WEBP"]:
+        img.save(output, format=save_format, quality=quality, optimize=True)
+        if output.tell() <= target_size_bytes:
+            print(f"IMAGE_COMPRESSION_SUCCESS: Compressed via quality reduction to {output.tell() / 1024:.2f} KB (Quality: {quality})")
+            return output.getvalue()
+            
+        while quality > 30 and output.tell() > target_size_bytes:
+            output = io.BytesIO()
+            quality -= 10
+            img.save(output, format=save_format, quality=quality, optimize=True)
+            if output.tell() <= target_size_bytes:
+                print(f"IMAGE_COMPRESSION_SUCCESS: Compressed via quality reduction to {output.tell() / 1024:.2f} KB (Quality: {quality})")
+                return output.getvalue()
+
+    # Step 2: Dimensions resizing (especially useful for PNG or very large JPEG/WEBP)
+    scale = 0.9
+    width, height = img.size
+    while scale > 0.1:
+        new_width = int(width * scale)
+        new_height = int(height * scale)
+        if new_width < 100 or new_height < 100:
+            break
+            
+        try:
+            resized_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        except AttributeError:
+            resized_img = img.resize((new_width, new_height), Image.ANTIALIAS)
+            
+        output = io.BytesIO()
+        if save_format in ["JPEG", "WEBP"]:
+            resized_img.save(output, format=save_format, quality=70, optimize=True)
+        else:
+            resized_img.save(output, format="PNG", optimize=True)
+            
+        if output.tell() <= target_size_bytes:
+            print(f"IMAGE_COMPRESSION_SUCCESS: Compressed via resizing to {new_width}x{new_height} and saving to {save_format} ({output.tell() / 1024:.2f} KB)")
+            return output.getvalue()
+            
+        scale -= 0.15
+
+    # Step 3: Extreme fallback - convert large PNG to JPEG
+    if save_format == "PNG" and output.tell() > target_size_bytes:
+        print("IMAGE_COMPRESSION: PNG still too large, converting to JPEG for aggressive compression...")
+        if img.mode in ("RGBA", "LA"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[3])
+            img_conv = background
+        else:
+            img_conv = img.convert("RGB")
+            
+        quality = 80
+        scale = 1.0
+        while quality > 30:
+            output = io.BytesIO()
+            if scale < 1.0:
+                width, height = img_conv.size
+                img_resized = img_conv.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
+            else:
+                img_resized = img_conv
+                
+            img_resized.save(output, format="JPEG", quality=quality, optimize=True)
+            if output.tell() <= target_size_bytes:
+                print(f"IMAGE_COMPRESSION_SUCCESS: Converted PNG to JPEG and compressed to {output.tell() / 1024:.2f} KB")
+                return output.getvalue()
+            quality -= 10
+            scale -= 0.15
+
+    # Best effort
+    final_size = output.tell() if output.tell() > 0 else len(image_bytes)
+    print(f"IMAGE_COMPRESSION_WARNING: Best effort size achieved: {final_size / 1024:.2f} KB")
+    return output.getvalue() if output.tell() > 0 else image_bytes
+
 async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
     if not image or not image.filename:
         return fallback_url
+
+    # Read the content and compress to 500KB maximum
+    try:
+        original_content = await image.read()
+        if not original_content:
+            return fallback_url
+        content = compress_image_to_500kb(original_content, image.filename)
+    except Exception as e:
+        print(f"IMAGE_COMPRESSION_FAILED: Error during image compression: {e}. Using original content.")
+        # Fallback to original content
+        content = original_content
 
     # Check Cloudinary configuration
     cloudinary_cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
@@ -119,7 +238,6 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
 
     if is_cloudinary_configured:
         try:
-            content = await image.read()
             # Upload to Cloudinary with a specific folder
             result = cloudinary.uploader.upload(content, folder="promptro_prompts")
             url = result.get("secure_url")
@@ -149,10 +267,6 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
         filename = f"{uuid.uuid4()}{extension}"
         upload_path = UPLOAD_DIR / filename
         
-        content = await image.read()
-        if not content:
-            return fallback_url
-            
         upload_path.write_bytes(content)
         
         backend_url = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip('/')
