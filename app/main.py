@@ -115,39 +115,32 @@ def compress_image_to_500kb(image_bytes: bytes, filename: str) -> bytes:
     save_format = original_format
     if save_format not in ["JPEG", "PNG", "WEBP"]:
         save_format = "JPEG"
-        
-    # Convert alpha channel/palette modes for JPEG if necessary
-    if save_format == "JPEG" and img.mode in ("RGBA", "LA"):
-        background = Image.new("RGB", img.size, (255, 255, 255))
-        background.paste(img, mask=img.split()[3])
-        img = background
-    elif save_format == "JPEG" and img.mode != "RGB":
-        img = img.convert("RGB")
 
-    # Step 1: Quality adjustment for JPEG or WEBP
-    quality = 90
-    output = io.BytesIO()
-    
+    # Step 1: Quality compression only (JPEG/WEBP only, keeping dimensions)
     if save_format in ["JPEG", "WEBP"]:
-        img.save(output, format=save_format, quality=quality, optimize=True)
-        if output.tell() <= target_size_bytes:
-            print(f"IMAGE_COMPRESSION_SUCCESS: Compressed via quality reduction to {output.tell() / 1024:.2f} KB (Quality: {quality})")
-            return output.getvalue()
+        # Convert color modes for JPEG if necessary
+        work_img = img
+        if save_format == "JPEG" and work_img.mode in ("RGBA", "LA"):
+            background = Image.new("RGB", work_img.size, (255, 255, 255))
+            background.paste(work_img, mask=work_img.split()[3])
+            work_img = background
+        elif save_format == "JPEG" and work_img.mode != "RGB":
+            work_img = work_img.convert("RGB")
             
-        while quality > 30 and output.tell() > target_size_bytes:
+        quality = 90
+        while quality >= 30:
             output = io.BytesIO()
-            quality -= 10
-            img.save(output, format=save_format, quality=quality, optimize=True)
+            work_img.save(output, format=save_format, quality=quality, optimize=True)
             if output.tell() <= target_size_bytes:
                 print(f"IMAGE_COMPRESSION_SUCCESS: Compressed via quality reduction to {output.tell() / 1024:.2f} KB (Quality: {quality})")
                 return output.getvalue()
+            quality -= 10
 
-    # Step 2: Dimensions resizing (especially useful for PNG or very large JPEG/WEBP)
-    scale = 0.9
-    width, height = img.size
-    while scale > 0.1:
-        new_width = int(width * scale)
-        new_height = int(height * scale)
+    # Step 2: Dimensions resizing (JPEG/WEBP/PNG)
+    scale = 0.85
+    while scale >= 0.1:
+        new_width = int(img.width * scale)
+        new_height = int(img.height * scale)
         if new_width < 100 or new_height < 100:
             break
             
@@ -156,21 +149,32 @@ def compress_image_to_500kb(image_bytes: bytes, filename: str) -> bytes:
         except AttributeError:
             resized_img = img.resize((new_width, new_height), Image.ANTIALIAS)
             
+        # Convert color modes for JPEG if save_format is JPEG
+        work_img = resized_img
+        if save_format == "JPEG" and work_img.mode in ("RGBA", "LA"):
+            background = Image.new("RGB", work_img.size, (255, 255, 255))
+            background.paste(work_img, mask=work_img.split()[3])
+            work_img = background
+        elif save_format == "JPEG" and work_img.mode != "RGB":
+            work_img = work_img.convert("RGB")
+
         output = io.BytesIO()
         if save_format in ["JPEG", "WEBP"]:
-            resized_img.save(output, format=save_format, quality=70, optimize=True)
+            q = max(30, int(85 * scale))
+            work_img.save(output, format=save_format, quality=q, optimize=True)
         else:
-            resized_img.save(output, format="PNG", optimize=True)
+            # PNG is lossless, so no quality parameter
+            work_img.save(output, format="PNG", optimize=True)
             
         if output.tell() <= target_size_bytes:
-            print(f"IMAGE_COMPRESSION_SUCCESS: Compressed via resizing to {new_width}x{new_height} and saving to {save_format} ({output.tell() / 1024:.2f} KB)")
+            print(f"IMAGE_COMPRESSION_SUCCESS: Resized to {new_width}x{new_height} as {save_format} ({output.tell() / 1024:.2f} KB)")
             return output.getvalue()
             
         scale -= 0.15
 
-    # Step 3: Extreme fallback - convert large PNG to JPEG
-    if save_format == "PNG" and output.tell() > target_size_bytes:
-        print("IMAGE_COMPRESSION: PNG still too large, converting to JPEG for aggressive compression...")
+    # Step 3: Extreme fallback - If PNG is still too big, convert to JPEG and compress aggressively
+    if save_format == "PNG":
+        print("IMAGE_COMPRESSION: PNG still too large. Forcing JPEG conversion...")
         if img.mode in ("RGBA", "LA"):
             background = Image.new("RGB", img.size, (255, 255, 255))
             background.paste(img, mask=img.split()[3])
@@ -178,24 +182,29 @@ def compress_image_to_500kb(image_bytes: bytes, filename: str) -> bytes:
         else:
             img_conv = img.convert("RGB")
             
-        quality = 80
-        scale = 1.0
-        while quality > 30:
-            output = io.BytesIO()
-            if scale < 1.0:
-                width, height = img_conv.size
-                img_resized = img_conv.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
-            else:
-                img_resized = img_conv
+        scale = 0.9
+        while scale >= 0.1:
+            new_width = int(img_conv.width * scale)
+            new_height = int(img_conv.height * scale)
+            if new_width < 100 or new_height < 100:
+                break
                 
-            img_resized.save(output, format="JPEG", quality=quality, optimize=True)
+            try:
+                resized_img = img_conv.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            except AttributeError:
+                resized_img = img_conv.resize((new_width, new_height), Image.ANTIALIAS)
+                
+            output = io.BytesIO()
+            q = max(20, int(80 * scale))
+            resized_img.save(output, format="JPEG", quality=q, optimize=True)
+            
             if output.tell() <= target_size_bytes:
-                print(f"IMAGE_COMPRESSION_SUCCESS: Converted PNG to JPEG and compressed to {output.tell() / 1024:.2f} KB")
+                print(f"IMAGE_COMPRESSION_SUCCESS: Converted PNG to JPEG, resized to {new_width}x{new_height} ({output.tell() / 1024:.2f} KB)")
                 return output.getvalue()
-            quality -= 10
+                
             scale -= 0.15
 
-    # Best effort
+    # Ultimate Best Effort
     final_size = output.tell() if output.tell() > 0 else len(image_bytes)
     print(f"IMAGE_COMPRESSION_WARNING: Best effort size achieved: {final_size / 1024:.2f} KB")
     return output.getvalue() if output.tell() > 0 else image_bytes
