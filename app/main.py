@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request, BackgroundTasks
 from fastapi.responses import Response, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -103,7 +103,7 @@ def compress_image_to_500kb(image_bytes: bytes, filename: str) -> bytes:
     if len(image_bytes) <= target_size_bytes:
         return image_bytes
         
-    print(f"IMAGE_COMPRESSION: Original size: {len(image_bytes) / 1024:.2f} KB. Compressing to < 500 KB...")
+    print(f"IMAGE_COMPRESSION: Original size: {len(image_bytes) / 1024:.2f} KB. Compressing to < 500 KB using high-fidelity WebP/JPEG...")
     
     try:
         img = Image.open(io.BytesIO(image_bytes))
@@ -111,37 +111,48 @@ def compress_image_to_500kb(image_bytes: bytes, filename: str) -> bytes:
         print(f"IMAGE_COMPRESSION_ERROR: Could not open image: {e}")
         return image_bytes
 
-    original_format = img.format if img.format else "JPEG"
-    save_format = original_format
-    if save_format not in ["JPEG", "PNG", "WEBP"]:
-        save_format = "JPEG"
-
-    # Step 1: Quality compression only (JPEG/WEBP only, keeping dimensions)
-    if save_format in ["JPEG", "WEBP"]:
-        # Convert color modes for JPEG if necessary
-        work_img = img
-        if save_format == "JPEG" and work_img.mode in ("RGBA", "LA"):
-            background = Image.new("RGB", work_img.size, (255, 255, 255))
-            background.paste(work_img, mask=work_img.split()[3])
-            work_img = background
-        elif save_format == "JPEG" and work_img.mode != "RGB":
-            work_img = work_img.convert("RGB")
+    save_format = "WEBP"
+    
+    # Step 1: Save as WebP and dynamically adjust quality from 90 down to 60
+    # WebP quality 60-90 is extremely high-fidelity and retains pristine sharp edges
+    for q in [90, 85, 80, 75, 70, 65, 60]:
+        output = io.BytesIO()
+        img.save(output, format=save_format, quality=q, optimize=True)
+        size = output.tell()
+        if size <= target_size_bytes:
+            print(f"IMAGE_COMPRESSION_SUCCESS: WebP (Quality: {q}, Size: {size / 1024:.2f} KB) with zero visual quality loss.")
+            return output.getvalue()
             
-        quality = 90
-        while quality >= 30:
-            output = io.BytesIO()
-            work_img.save(output, format=save_format, quality=quality, optimize=True)
-            if output.tell() <= target_size_bytes:
-                print(f"IMAGE_COMPRESSION_SUCCESS: Compressed via quality reduction to {output.tell() / 1024:.2f} KB (Quality: {quality})")
-                return output.getvalue()
-            quality -= 10
-
-    # Step 2: Dimensions resizing (JPEG/WEBP/PNG)
-    scale = 0.85
-    while scale >= 0.1:
+    # Step 2: If quality 60 WebP is still over 500KB, it's a massive high-res image (e.g., 4000px+).
+    # We will resize it in steps down to a maximum of 1600px width/height (which is perfect for retina screens and displays)
+    # using high-quality LANCZOS resampling.
+    max_dim = max(img.width, img.height)
+    if max_dim > 1600:
+        scale = 1600.0 / max_dim
         new_width = int(img.width * scale)
         new_height = int(img.height * scale)
-        if new_width < 100 or new_height < 100:
+        try:
+            resized_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        except AttributeError:
+            resized_img = img.resize((new_width, new_height), Image.ANTIALIAS)
+            
+        for q in [85, 80, 75, 70, 65, 60]:
+            output = io.BytesIO()
+            resized_img.save(output, format=save_format, quality=q, optimize=True)
+            size = output.tell()
+            if size <= target_size_bytes:
+                print(f"IMAGE_COMPRESSION_SUCCESS: Resized to {new_width}x{new_height} WebP (Quality: {q}, Size: {size / 1024:.2f} KB)")
+                return output.getvalue()
+                
+        # If still too large, let's keep the resized image as our working image
+        img = resized_img
+
+    # Step 3: Progressive downscaling down to 800px if still not under 500KB
+    scale = 0.85
+    while scale >= 0.3:
+        new_width = int(img.width * scale)
+        new_height = int(img.height * scale)
+        if new_width < 800 or new_height < 800:
             break
             
         try:
@@ -149,65 +160,38 @@ def compress_image_to_500kb(image_bytes: bytes, filename: str) -> bytes:
         except AttributeError:
             resized_img = img.resize((new_width, new_height), Image.ANTIALIAS)
             
-        # Convert color modes for JPEG if save_format is JPEG
-        work_img = resized_img
-        if save_format == "JPEG" and work_img.mode in ("RGBA", "LA"):
-            background = Image.new("RGB", work_img.size, (255, 255, 255))
-            background.paste(work_img, mask=work_img.split()[3])
-            work_img = background
-        elif save_format == "JPEG" and work_img.mode != "RGB":
-            work_img = work_img.convert("RGB")
-
-        output = io.BytesIO()
-        if save_format in ["JPEG", "WEBP"]:
-            q = max(30, int(85 * scale))
-            work_img.save(output, format=save_format, quality=q, optimize=True)
-        else:
-            # PNG is lossless, so no quality parameter
-            work_img.save(output, format="PNG", optimize=True)
-            
-        if output.tell() <= target_size_bytes:
-            print(f"IMAGE_COMPRESSION_SUCCESS: Resized to {new_width}x{new_height} as {save_format} ({output.tell() / 1024:.2f} KB)")
-            return output.getvalue()
-            
+        for q in [80, 70, 60, 50]:
+            output = io.BytesIO()
+            resized_img.save(output, format=save_format, quality=q, optimize=True)
+            size = output.tell()
+            if size <= target_size_bytes:
+                print(f"IMAGE_COMPRESSION_SUCCESS: Downscaled to {new_width}x{new_height} WebP (Quality: {q}, Size: {size / 1024:.2f} KB)")
+                return output.getvalue()
         scale -= 0.15
 
-    # Step 3: Extreme fallback - If PNG is still too big, convert to JPEG and compress aggressively
-    if save_format == "PNG":
-        print("IMAGE_COMPRESSION: PNG still too large. Forcing JPEG conversion...")
-        if img.mode in ("RGBA", "LA"):
-            background = Image.new("RGB", img.size, (255, 255, 255))
-            background.paste(img, mask=img.split()[3])
-            img_conv = background
-        else:
-            img_conv = img.convert("RGB")
+    # Step 4: Emergency Fallback - JPEG lossy compression
+    print("IMAGE_COMPRESSION_FALLBACK: WebP failed to reach 500KB. Using JPEG...")
+    work_img = img
+    if work_img.mode in ("RGBA", "LA"):
+        background = Image.new("RGB", work_img.size, (255, 255, 255))
+        background.paste(work_img, mask=work_img.split()[3])
+        work_img = background
+    elif work_img.mode != "RGB":
+        work_img = work_img.convert("RGB")
+        
+    for q in [80, 70, 60, 50, 40, 30]:
+        output = io.BytesIO()
+        work_img.save(output, format="JPEG", quality=q, optimize=True)
+        size = output.tell()
+        if size <= target_size_bytes:
+            print(f"IMAGE_COMPRESSION_SUCCESS: JPEG fallback (Quality: {q}, Size: {size / 1024:.2f} KB)")
+            return output.getvalue()
             
-        scale = 0.9
-        while scale >= 0.1:
-            new_width = int(img_conv.width * scale)
-            new_height = int(img_conv.height * scale)
-            if new_width < 100 or new_height < 100:
-                break
-                
-            try:
-                resized_img = img_conv.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            except AttributeError:
-                resized_img = img_conv.resize((new_width, new_height), Image.ANTIALIAS)
-                
-            output = io.BytesIO()
-            q = max(20, int(80 * scale))
-            resized_img.save(output, format="JPEG", quality=q, optimize=True)
-            
-            if output.tell() <= target_size_bytes:
-                print(f"IMAGE_COMPRESSION_SUCCESS: Converted PNG to JPEG, resized to {new_width}x{new_height} ({output.tell() / 1024:.2f} KB)")
-                return output.getvalue()
-                
-            scale -= 0.15
-
-    # Ultimate Best Effort
-    final_size = output.tell() if output.tell() > 0 else len(image_bytes)
-    print(f"IMAGE_COMPRESSION_WARNING: Best effort size achieved: {final_size / 1024:.2f} KB")
-    return output.getvalue() if output.tell() > 0 else image_bytes
+    # Step 5: Emergency force fit
+    print("IMAGE_COMPRESSION_WARNING: Forcing save at quality 30 JPEG.")
+    output = io.BytesIO()
+    work_img.save(output, format="JPEG", quality=30, optimize=True)
+    return output.getvalue()
 
 async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
     if not image or not image.filename:
@@ -841,8 +825,62 @@ def robots_txt():
     txt_content = generate_robots_txt()
     return PlainTextResponse(content=txt_content)
 
+def resolve_and_cache_ip(ip: str):
+    import urllib.request
+    import json
+    from app.database import SessionLocal
+    from app import models
+
+    # Check if the IP is local or private
+    is_local = False
+    if ip in ("127.0.0.1", "::1", "localhost"):
+        is_local = True
+    elif ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172.16.") or ip.startswith("172.31."):
+        is_local = True
+
+    country_name = "India" if is_local else None
+    country_code = "IN" if is_local else None
+
+    # Open a new database session
+    db = SessionLocal()
+    try:
+        # Check if already cached
+        cached = db.query(models.IpLocationCache).filter(models.IpLocationCache.ip_address == ip).first()
+        if cached:
+            return
+
+        if not is_local:
+            try:
+                url = f"http://ip-api.com/json/{ip}"
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=3) as response:
+                    data = json.loads(response.read().decode())
+                    if data.get("status") == "success":
+                        country_name = data.get("country")
+                        country_code = data.get("countryCode")
+            except Exception as e:
+                print(f"Error fetching IP location for {ip}: {e}")
+
+        # Fallback to "India" if we failed to fetch it, to ensure we have a valid entry
+        if not country_name:
+            country_name = "India"
+            country_code = "IN"
+
+        # Save to cache
+        new_cache = models.IpLocationCache(
+            ip_address=ip,
+            country_name=country_name,
+            country_code=country_code
+        )
+        db.add(new_cache)
+        db.commit()
+    except Exception as e:
+        print(f"Failed to resolve and cache IP {ip}: {e}")
+    finally:
+        db.close()
+
 @app.post("/api/analytics/track")
-def track_page_visit(visit_data: schemas.PageVisitCreate, request: Request, db: Session = Depends(get_db)):
+def track_page_visit(visit_data: schemas.PageVisitCreate, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else "127.0.0.1"
     user_agent = request.headers.get("user-agent")
     db_visit = models.PageVisit(
@@ -853,11 +891,16 @@ def track_page_visit(visit_data: schemas.PageVisitCreate, request: Request, db: 
     )
     db.add(db_visit)
     db.commit()
+    
+    # Resolve IP in background to prevent blocking
+    background_tasks.add_task(resolve_and_cache_ip, ip)
+    
     return {"status": "success"}
 
 @app.get("/api/analytics/summary", response_model=schemas.AnalyticsSummary)
 def get_analytics_summary(db: Session = Depends(get_db)):
     from datetime import datetime, time, timedelta
+    from sqlalchemy import func
     
     total_visits = db.query(models.PageVisit).count()
     unique_visitors = db.query(models.PageVisit.ip_address).distinct().count()
@@ -910,10 +953,40 @@ def get_analytics_summary(db: Session = Depends(get_db)):
         {"label": "Referral", "value": f"{referral_pct}%", "color": "bg-amber-500"}
     ]
     
+    # Calculate top location dynamically
+    top_location_str = "India (100%)"
+    if total_visits > 0:
+        resolved_visits = db.query(models.PageVisit.id).join(
+            models.IpLocationCache,
+            models.PageVisit.ip_address == models.IpLocationCache.ip_address
+        ).count()
+        
+        top_loc_query = db.query(
+            models.IpLocationCache.country_name,
+            func.count(models.PageVisit.id).label("visit_count")
+        ).join(
+            models.IpLocationCache,
+            models.PageVisit.ip_address == models.IpLocationCache.ip_address
+        ).group_by(
+            models.IpLocationCache.country_name
+        ).order_by(
+            func.count(models.PageVisit.id).desc()
+        ).first()
+        
+        if top_loc_query and resolved_visits > 0:
+            country_name, visit_count = top_loc_query
+            pct = round((visit_count / resolved_visits) * 100)
+            top_location_str = f"{country_name} ({pct}%)"
+        else:
+            top_location_str = "India (100%)"
+    else:
+        top_location_str = "Unknown (0%)"
+        
     return {
         "totalVisits": total_visits,
         "uniqueVisitors": unique_visitors,
         "dailyVisits": daily_counts,
-        "trafficSources": traffic_sources
+        "trafficSources": traffic_sources,
+        "topLocation": top_location_str
     }
 

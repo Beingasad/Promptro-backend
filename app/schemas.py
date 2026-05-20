@@ -139,3 +139,5 @@ class AnalyticsSummary(BaseModel):
     uniqueVisitors: int
     dailyVisits: List[int]
     trafficSources: List[dict]
+    topLocation: Optional[str] = None
+
