@@ -197,15 +197,14 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
     if not image or not image.filename:
         return fallback_url
 
-    # Read the content directly — frontend already compresses images to ≤500KB
-    # Skipping backend compression to avoid Render's 30s timeout
+    # Read the uploaded content
     try:
-        content = await image.read()
-        if not content:
+        original_content = await image.read()
+        if not original_content:
             return fallback_url
-        print(f"IMAGE_UPLOAD: Received image '{image.filename}' ({len(content) / 1024:.1f} KB). Uploading directly to Cloudinary.")
+        print(f"IMAGE_UPLOAD: Received '{image.filename}' ({len(original_content) / 1024:.1f} KB)")
     except Exception as e:
-        print(f"IMAGE_READ_FAILED: Could not read uploaded image: {e}.")
+        print(f"IMAGE_READ_FAILED: {e}")
         return fallback_url
 
     # Check Cloudinary configuration
@@ -214,67 +213,64 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
     cloudinary_api_secret = os.getenv("CLOUDINARY_API_SECRET")
     cloudinary_url = os.getenv("CLOUDINARY_URL")
 
-    is_cloudinary_configured = False
-    if cloudinary_cloud_name and cloudinary_api_key and cloudinary_api_secret:
-        is_cloudinary_configured = True
-    elif cloudinary_url:
-        is_cloudinary_configured = True
+    is_cloudinary_configured = bool(
+        (cloudinary_cloud_name and cloudinary_api_key and cloudinary_api_secret)
+        or cloudinary_url
+    )
 
-    # In production (Render), we MUST use Cloudinary.
     is_production = os.getenv("RENDER") is not None
 
     if is_production and not is_cloudinary_configured:
         raise HTTPException(
             status_code=500,
-            detail="CRITICAL CONFIGURATION ERROR: Cloudinary is NOT configured in production environment! Image upload failed."
+            detail="CRITICAL CONFIGURATION ERROR: Cloudinary is NOT configured in production environment!"
         )
 
     if is_cloudinary_configured:
+        import asyncio
+        import io
+
+        def compress_and_upload():
+            # Compress only if image is over 500KB
+            content = compress_image_to_500kb(original_content, image.filename)
+            print(f"IMAGE_AFTER_COMPRESS: {len(content) / 1024:.1f} KB — uploading to Cloudinary...")
+            result = cloudinary.uploader.upload(content, folder="promptro_prompts", resource_type="image")
+            return result.get("secure_url")
+
         try:
-            # Upload to Cloudinary with a specific folder
-            result = cloudinary.uploader.upload(content, folder="promptro_prompts")
-            url = result.get("secure_url")
+            loop = asyncio.get_event_loop()
+            url = await loop.run_in_executor(None, compress_and_upload)
             if url:
-                # Force absolute HTTPS Cloudinary URL
-                if not url.startswith("https://"):
-                    url = url.replace("http://", "https://")
-                
-                # Print saved image_url after successful upload
-                print(f"CLOUDINARY_UPLOAD_SUCCESS: Successfully uploaded prompt image to Cloudinary. URL: {url}")
+                url = url if url.startswith("https://") else url.replace("http://", "https://")
+                print(f"CLOUDINARY_UPLOAD_SUCCESS: {url}")
                 return url
             else:
-                raise ValueError("Cloudinary upload succeeded but returned no secure_url")
+                raise ValueError("Cloudinary returned no secure_url")
         except Exception as e:
-            # If Cloudinary upload fails, raise error instead of silently saving local image
-            print(f"CLOUDINARY_UPLOAD_FAILED: Error during Cloudinary upload: {e}")
+            print(f"CLOUDINARY_UPLOAD_FAILED: {e}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Production image upload to Cloudinary failed: {str(e)}"
+                detail=f"Image upload to Cloudinary failed: {str(e)}"
             )
     else:
-        print("WARNING: Cloudinary not configured. Using local storage (ephemeral).")
+        print("WARNING: Cloudinary not configured. Using local storage.")
 
-    # Local development fallback (strictly prohibited in production)
+    # Local development fallback
     try:
+        content = compress_image_to_500kb(original_content, image.filename)
         extension = Path(image.filename).suffix or ".jpg"
         filename = f"{uuid.uuid4()}{extension}"
         upload_path = UPLOAD_DIR / filename
-        
         upload_path.write_bytes(content)
-        
         backend_url = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip('/')
         if not backend_url.startswith('http') and backend_url:
-             backend_url = f"https://{backend_url}"
-             
+            backend_url = f"https://{backend_url}"
         final_url = f"{backend_url}/uploads/{filename}"
-        print(f"LOCAL_UPLOAD_SUCCESS: Local storage URL generated: {final_url}")
+        print(f"LOCAL_UPLOAD_SUCCESS: {final_url}")
         return final_url
     except Exception as e:
         print(f"ERROR: Local upload failed: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Local image upload failed: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Local image upload failed: {str(e)}")
 
 @app.get("/")
 def read_root():
