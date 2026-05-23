@@ -197,16 +197,16 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
     if not image or not image.filename:
         return fallback_url
 
-    # Read the content and compress to 500KB maximum
+    # Read the content directly — frontend already compresses images to ≤500KB
+    # Skipping backend compression to avoid Render's 30s timeout
     try:
-        original_content = await image.read()
-        if not original_content:
+        content = await image.read()
+        if not content:
             return fallback_url
-        content = compress_image_to_500kb(original_content, image.filename)
+        print(f"IMAGE_UPLOAD: Received image '{image.filename}' ({len(content) / 1024:.1f} KB). Uploading directly to Cloudinary.")
     except Exception as e:
-        print(f"IMAGE_COMPRESSION_FAILED: Error during image compression: {e}. Using original content.")
-        # Fallback to original content
-        content = original_content
+        print(f"IMAGE_READ_FAILED: Could not read uploaded image: {e}.")
+        return fallback_url
 
     # Check Cloudinary configuration
     cloudinary_cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
