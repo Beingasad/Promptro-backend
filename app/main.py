@@ -748,11 +748,23 @@ def save_user_activity(
 def generate_sitemap_xml(db: Session) -> str:
     from datetime import datetime
     
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    
     # Base URLs
     urls = [
-        {"loc": "https://promptro.in/", "priority": "1.0", "changefreq": "daily"},
-        {"loc": "https://promptro.in/explore", "priority": "0.8", "changefreq": "daily"},
-        {"loc": "https://promptro.in/categories", "priority": "0.8", "changefreq": "weekly"}
+        {"loc": "https://promptro.in/", "priority": "1.0", "changefreq": "daily", "lastmod": today},
+        {"loc": "https://promptro.in/explore", "priority": "0.8", "changefreq": "daily", "lastmod": today},
+        {"loc": "https://promptro.in/categories", "priority": "0.8", "changefreq": "weekly", "lastmod": today},
+        # Blog
+        {"loc": "https://promptro.in/blog", "priority": "0.8", "changefreq": "weekly", "lastmod": today},
+        {"loc": "https://promptro.in/blog/what-is-an-ai-image-prompt", "priority": "0.7", "changefreq": "monthly", "lastmod": today},
+        {"loc": "https://promptro.in/blog/best-midjourney-prompts-2026", "priority": "0.7", "changefreq": "monthly", "lastmod": today},
+        {"loc": "https://promptro.in/blog/how-to-use-negative-prompts", "priority": "0.7", "changefreq": "monthly", "lastmod": today},
+        # Trust Pages
+        {"loc": "https://promptro.in/about", "priority": "0.6", "changefreq": "monthly", "lastmod": today},
+        {"loc": "https://promptro.in/contact", "priority": "0.5", "changefreq": "monthly", "lastmod": today},
+        {"loc": "https://promptro.in/privacy-policy", "priority": "0.5", "changefreq": "monthly", "lastmod": today},
+        {"loc": "https://promptro.in/terms", "priority": "0.5", "changefreq": "monthly", "lastmod": today},
     ]
     
     # Public Prompts (including older ones where visibility might be NULL)
@@ -782,6 +794,7 @@ def generate_sitemap_xml(db: Session) -> str:
     xml += '</urlset>'
     
     return xml
+
 
 def generate_robots_txt() -> str:
     return (
@@ -985,4 +998,64 @@ def get_analytics_summary(db: Session = Depends(get_db)):
         "trafficSources": traffic_sources,
         "topLocation": top_location_str
     }
+
+
+@app.get("/api/consent/{user_id}", response_model=schemas.ConsentStatusOut)
+def get_user_consent(user_id: str, db: Session = Depends(get_db)):
+    consent = db.query(models.UserConsent).filter(models.UserConsent.user_id == user_id).first()
+    if not consent:
+        return {
+            "user_id": user_id,
+            "terms_accepted": False,
+            "terms_accepted_at": None,
+            "privacy_accepted_at": None,
+            "cookie_consent_status": "pending"
+        }
+    return consent
+
+
+@app.post("/api/consent/accept", response_model=schemas.ConsentStatusOut)
+def accept_user_consent(consent_data: schemas.ConsentAccept, db: Session = Depends(get_db)):
+    from datetime import datetime
+    consent = db.query(models.UserConsent).filter(models.UserConsent.user_id == consent_data.user_id).first()
+    now = datetime.utcnow()
+    if not consent:
+        consent = models.UserConsent(
+            user_id=consent_data.user_id,
+            email=consent_data.email,
+            terms_accepted=True,
+            terms_accepted_at=now,
+            privacy_accepted_at=now,
+            cookie_consent_status="pending"
+        )
+        db.add(consent)
+    else:
+        consent.terms_accepted = True
+        consent.terms_accepted_at = now
+        consent.privacy_accepted_at = now
+        if consent_data.email:
+            consent.email = consent_data.email
+    db.commit()
+    db.refresh(consent)
+    return consent
+
+
+@app.post("/api/consent/cookie")
+def update_cookie_consent(cookie_data: schemas.CookieConsentUpdate, db: Session = Depends(get_db)):
+    if not cookie_data.user_id:
+        return {"status": "success", "message": "Cookie consent saved in localStorage"}
+    
+    consent = db.query(models.UserConsent).filter(models.UserConsent.user_id == cookie_data.user_id).first()
+    if not consent:
+        consent = models.UserConsent(
+            user_id=cookie_data.user_id,
+            terms_accepted=False,
+            cookie_consent_status=cookie_data.status
+        )
+        db.add(consent)
+    else:
+        consent.cookie_consent_status = cookie_data.status
+    db.commit()
+    return {"status": "success", "cookie_consent_status": cookie_data.status}
+
 

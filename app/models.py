@@ -98,3 +98,18 @@ class IpLocationCache(Base):
     country_name = Column(String, nullable=False)
     country_code = Column(String, nullable=True)
 
+
+class UserConsent(Base):
+    __tablename__ = "user_consents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, unique=True, index=True)  # Firebase UID
+    email = Column(String, nullable=True)
+    terms_accepted = Column(Boolean, default=False)
+    terms_accepted_at = Column(DateTime(timezone=True), nullable=True)
+    privacy_accepted_at = Column(DateTime(timezone=True), nullable=True)
+    cookie_consent_status = Column(String, default="pending")  # "accepted" / "rejected" / "pending"
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+

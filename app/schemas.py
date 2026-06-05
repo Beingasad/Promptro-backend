@@ -141,3 +141,25 @@ class AnalyticsSummary(BaseModel):
     trafficSources: List[dict]
     topLocation: Optional[str] = None
 
+
+class ConsentAccept(BaseModel):
+    user_id: str
+    email: Optional[str] = None
+
+
+class CookieConsentUpdate(BaseModel):
+    user_id: Optional[str] = None
+    status: str  # "accepted" / "rejected"
+
+
+class ConsentStatusOut(BaseModel):
+    user_id: str
+    terms_accepted: bool
+    terms_accepted_at: Optional[datetime] = None
+    privacy_accepted_at: Optional[datetime] = None
+    cookie_consent_status: str
+
+    class Config:
+        from_attributes = True
+
+
