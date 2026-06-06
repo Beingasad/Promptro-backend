@@ -25,10 +25,10 @@ async def lifespan(app: FastAPI):
     if db.query(models.Prompt).count() == 0:
         import uuid
         mock_prompts = [
-            models.Prompt(id=str(uuid.uuid4()), title="Cyberpunk Cityscape", category="Sci-Fi", model="Midjourney v6", image_url="https://images.unsplash.com/photo-1605806616949-1e87b487cb2a?q=80&w=1000&auto=format&fit=crop", prompt_text="A highly detailed cyberpunk cityscape at night...", likes=1205, views=4500),
-            models.Prompt(id=str(uuid.uuid4()), title="Ethereal Forest Spirit", category="Fantasy", model="DALL-E 3", image_url="https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=800&auto=format&fit=crop", prompt_text="Ethereal glowing spirit in a dark mystical forest...", likes=840, views=3200),
-            models.Prompt(id=str(uuid.uuid4()), title="Minimalist Architecture", category="Architecture", model="SDXL", image_url="https://images.unsplash.com/photo-1600585154340-be6161a56a0c?q=80&w=1200&auto=format&fit=crop", prompt_text="Clean minimalist concrete architecture...", likes=532, views=2100),
-            models.Prompt(id=str(uuid.uuid4()), title="Neon Samurai", category="Anime", model="Niji Journey", image_url="https://images.unsplash.com/photo-1533613220915-609f661a6fe1?q=80&w=900&auto=format&fit=crop", prompt_text="A neon lit samurai standing in the rain...", likes=2100, views=8900),
+            models.Prompt(id=str(uuid.uuid4()), title="Cyberpunk Cityscape", category="Sci-Fi", model="Midjourney v6", image_url="https://images.unsplash.com/photo-1605806616949-1e87b487cb2a?q=80&w=1000&auto=format&fit=crop", prompt_text="A highly detailed cyberpunk cityscape at night...", likes=1205, views=4500, aspect_ratio="3 / 2"),
+            models.Prompt(id=str(uuid.uuid4()), title="Ethereal Forest Spirit", category="Fantasy", model="DALL-E 3", image_url="https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=800&auto=format&fit=crop", prompt_text="Ethereal glowing spirit in a dark mystical forest...", likes=840, views=3200, aspect_ratio="800 / 1210"),
+            models.Prompt(id=str(uuid.uuid4()), title="Minimalist Architecture", category="Architecture", model="SDXL", image_url="https://images.unsplash.com/photo-1600585154340-be6161a56a0c?q=80&w=1200&auto=format&fit=crop", prompt_text="Clean minimalist concrete architecture...", likes=532, views=2100, aspect_ratio="1200 / 800"),
+            models.Prompt(id=str(uuid.uuid4()), title="Neon Samurai", category="Anime", model="Niji Journey", image_url="https://images.unsplash.com/photo-1533613220915-609f661a6fe1?q=80&w=900&auto=format&fit=crop", prompt_text="A neon lit samurai standing in the rain...", likes=2100, views=8900, aspect_ratio="900 / 1125"),
         ]
         db.add_all(mock_prompts)
         db.commit()
