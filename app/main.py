@@ -282,9 +282,9 @@ def send_email_background(to_email: str, subject: str, body: str):
         import json
 
         print("Using Resend API to send email...")
-        sender_email = os.getenv("SMTP_USER", "onboarding@resend.dev")
-        if "onboarding@resend.dev" in sender_email or not os.getenv("SMTP_USER"):
-            sender_email = "onboarding@resend.dev"
+        sender_email = os.getenv("SMTP_USER", "otp@promptro.in")
+        if not sender_email or "gmail.com" in sender_email or "onboarding@resend.dev" in sender_email:
+            sender_email = "otp@promptro.in"
 
         url = "https://api.resend.com/emails"
         headers = {
