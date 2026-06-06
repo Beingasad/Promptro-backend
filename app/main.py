@@ -1157,3 +1157,132 @@ def update_cookie_consent(cookie_data: schemas.CookieConsentUpdate, db: Session 
     return {"status": "success", "cookie_consent_status": cookie_data.status}
 
 
+# --- OTP AUTH ENDPOINTS ---
+
+@app.post("/api/auth/send-otp")
+def send_otp(body: schemas.OTPRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    import random
+    from datetime import datetime, timedelta
+
+    email = body.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+
+    # Rate limit: prevent resend within 60 seconds
+    recent = db.query(models.OTPVerification).filter(
+        models.OTPVerification.email == email,
+        models.OTPVerification.verified == False,
+        models.OTPVerification.created_at >= datetime.utcnow() - timedelta(seconds=60)
+    ).first()
+    if recent:
+        raise HTTPException(status_code=429, detail="Please wait before requesting a new OTP")
+
+    # Generate 6-digit OTP
+    otp_code = str(random.randint(100000, 999999))
+    expires_at = datetime.utcnow() + timedelta(minutes=5)
+
+    # Store OTP
+    otp_record = models.OTPVerification(
+        email=email,
+        otp_code=otp_code,
+        expires_at=expires_at
+    )
+    db.add(otp_record)
+    db.commit()
+
+    # Send OTP email in background
+    email_subject = "Your Promptro Verification Code"
+    email_body = (
+        f"Hello,\n\n"
+        f"Your Promptro verification code is: {otp_code}\n\n"
+        f"This code will expire in 5 minutes.\n"
+        f"If you didn't request this code, please ignore this email.\n\n"
+        f"Best regards,\n"
+        f"Promptro Team\n"
+        f"https://promptro.in"
+    )
+    background_tasks.add_task(send_email_background, email, email_subject, email_body)
+
+    return {"status": "sent", "message": "OTP sent to your email"}
+
+
+@app.post("/api/auth/verify-otp")
+def verify_otp(body: schemas.OTPVerify, db: Session = Depends(get_db)):
+    from datetime import datetime
+
+    email = body.email.strip().lower()
+    otp = body.otp.strip()
+
+    if not otp or len(otp) != 6:
+        raise HTTPException(status_code=400, detail="Invalid OTP format")
+
+    # Find the latest unverified OTP for this email
+    otp_record = db.query(models.OTPVerification).filter(
+        models.OTPVerification.email == email,
+        models.OTPVerification.otp_code == otp,
+        models.OTPVerification.verified == False
+    ).order_by(models.OTPVerification.created_at.desc()).first()
+
+    if not otp_record:
+        raise HTTPException(status_code=400, detail="Invalid OTP. Please check and try again.")
+
+    # Check expiry
+    if datetime.utcnow() > otp_record.expires_at.replace(tzinfo=None):
+        raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
+
+    # Mark as verified
+    otp_record.verified = True
+    db.commit()
+
+    return {"status": "verified", "message": "Email verified successfully"}
+
+
+@app.post("/api/auth/register-profile", response_model=schemas.UserProfileOut)
+def register_profile(body: schemas.UserProfileCreate, db: Session = Depends(get_db)):
+    from datetime import datetime
+
+    # Check if profile already exists
+    existing = db.query(models.UserProfile).filter(
+        models.UserProfile.firebase_uid == body.firebase_uid
+    ).first()
+    if existing:
+        return existing
+
+    now = datetime.utcnow()
+    profile = models.UserProfile(
+        firebase_uid=body.firebase_uid,
+        first_name=body.first_name,
+        last_name=body.last_name,
+        gender=body.gender,
+        email=body.email.strip().lower(),
+        provider=body.provider or "email",
+        terms_accepted=body.terms_accepted,
+        terms_accepted_at=now if body.terms_accepted else None,
+        email_verified=False
+    )
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+@app.get("/api/auth/profile/{firebase_uid}", response_model=schemas.UserProfileOut)
+def get_user_profile(firebase_uid: str, db: Session = Depends(get_db)):
+    profile = db.query(models.UserProfile).filter(
+        models.UserProfile.firebase_uid == firebase_uid
+    ).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return profile
+
+
+@app.patch("/api/auth/profile/{firebase_uid}/verify-email")
+def verify_user_email(firebase_uid: str, db: Session = Depends(get_db)):
+    profile = db.query(models.UserProfile).filter(
+        models.UserProfile.firebase_uid == firebase_uid
+    ).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    profile.email_verified = True
+    db.commit()
+    return {"status": "success", "email_verified": True}

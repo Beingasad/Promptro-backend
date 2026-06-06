@@ -175,3 +175,36 @@ class ConsentStatusOut(BaseModel):
         from_attributes = True
 
 
+# --- OTP Auth Schemas ---
+
+class OTPRequest(BaseModel):
+    email: str
+
+class OTPVerify(BaseModel):
+    email: str
+    otp: str
+
+class UserProfileCreate(BaseModel):
+    firebase_uid: str
+    first_name: str
+    last_name: Optional[str] = None
+    gender: Optional[str] = None
+    email: str
+    provider: Optional[str] = "email"
+    terms_accepted: bool = False
+
+class UserProfileOut(BaseModel):
+    id: int
+    firebase_uid: str
+    first_name: str
+    last_name: Optional[str] = None
+    gender: Optional[str] = None
+    email: str
+    provider: str
+    terms_accepted: bool
+    terms_accepted_at: Optional[datetime] = None
+    email_verified: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

@@ -115,3 +115,28 @@ class UserConsent(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class OTPVerification(Base):
+    __tablename__ = "otp_verifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, index=True)
+    otp_code = Column(String)
+    expires_at = Column(DateTime(timezone=True))
+    verified = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    firebase_uid = Column(String, unique=True, index=True)
+    first_name = Column(String)
+    last_name = Column(String, nullable=True)
+    gender = Column(String, nullable=True)
+    email = Column(String)
+    provider = Column(String, default="email")  # "email" or "google"
+    terms_accepted = Column(Boolean, default=False)
+    terms_accepted_at = Column(DateTime(timezone=True), nullable=True)
+    email_verified = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
