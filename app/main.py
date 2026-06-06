@@ -1168,6 +1168,14 @@ def send_otp(body: schemas.OTPRequest, background_tasks: BackgroundTasks, db: Se
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Invalid email address")
 
+    # Check if user already exists
+    existing_user = db.query(models.UserProfile).filter(models.UserProfile.email == email).first()
+    if existing_user:
+        if existing_user.provider == "google":
+            raise HTTPException(status_code=400, detail="This email is registered with Google. Please log in using Google.")
+        else:
+            raise HTTPException(status_code=400, detail="An account already exists with this email.")
+
     # Rate limit: prevent resend within 60 seconds
     recent = db.query(models.OTPVerification).filter(
         models.OTPVerification.email == email,
@@ -1286,3 +1294,14 @@ def verify_user_email(firebase_uid: str, db: Session = Depends(get_db)):
     profile.email_verified = True
     db.commit()
     return {"status": "success", "email_verified": True}
+
+
+@app.get("/api/auth/check-email")
+def check_email(email: str, db: Session = Depends(get_db)):
+    email_clean = email.strip().lower()
+    profile = db.query(models.UserProfile).filter(
+        models.UserProfile.email == email_clean
+    ).first()
+    if profile:
+        return {"exists": True, "provider": profile.provider}
+    return {"exists": False}
