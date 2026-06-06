@@ -1349,6 +1349,32 @@ def check_email(email: str, db: Session = Depends(get_db)):
 
 @app.get("/api/admin/users")
 def get_admin_users(db: Session = Depends(get_db)):
+    from datetime import datetime
+    # Sync legacy users from UserConsent who don't have a UserProfile
+    consents = db.query(models.UserConsent).all()
+    for c in consents:
+        if not c.user_id:
+            continue
+        profile_exists = db.query(models.UserProfile).filter(
+            models.UserProfile.firebase_uid == c.user_id
+        ).first()
+        if not profile_exists and c.email:
+            # Create profile from consent details
+            new_profile = models.UserProfile(
+                firebase_uid=c.user_id,
+                first_name="User",
+                last_name=None,
+                gender="Not specified",
+                email=c.email,
+                provider="email",  # default fallback
+                terms_accepted=c.terms_accepted,
+                terms_accepted_at=c.terms_accepted_at,
+                email_verified=False,
+                created_at=c.created_at or datetime.utcnow()
+            )
+            db.add(new_profile)
+    db.commit()
+
     profiles = db.query(models.UserProfile).all()
     result = []
     for p in profiles:
