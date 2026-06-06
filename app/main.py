@@ -1208,7 +1208,12 @@ def send_otp(body: schemas.OTPRequest, background_tasks: BackgroundTasks, db: Se
 
     # Check if user already exists
     existing_user = db.query(models.UserProfile).filter(models.UserProfile.email == email).first()
-    if existing_user:
+    if not existing_user:
+        # Fallback to UserConsent for legacy users
+        consent = db.query(models.UserConsent).filter(models.UserConsent.email == email).first()
+        if consent:
+            raise HTTPException(status_code=400, detail="An account already exists with this email.")
+    else:
         if existing_user.provider == "google":
             raise HTTPException(status_code=400, detail="This email is registered with Google. Please log in using Google.")
         else:
@@ -1342,6 +1347,14 @@ def check_email(email: str, db: Session = Depends(get_db)):
     ).first()
     if profile:
         return {"exists": True, "provider": profile.provider}
+    
+    # Fallback to UserConsent for legacy users
+    consent = db.query(models.UserConsent).filter(
+        models.UserConsent.email == email_clean
+    ).first()
+    if consent:
+        return {"exists": True, "provider": "email"}
+        
     return {"exists": False}
 
 
