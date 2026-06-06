@@ -8,6 +8,9 @@ import cloudinary
 import cloudinary.uploader
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from app import models, schemas
 from app.database import engine, get_db
@@ -271,6 +274,37 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
     except Exception as e:
         print(f"ERROR: Local upload failed: {e}")
         raise HTTPException(status_code=500, detail=f"Local image upload failed: {str(e)}")
+
+def send_email_background(to_email: str, subject: str, body: str):
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    smtp_server = "smtp.gmail.com"
+    smtp_port = 587
+    sender_email = os.getenv("SMTP_USER", "support.promptro@gmail.com")
+    sender_password = os.getenv("SMTP_PASSWORD")
+    
+    if not sender_password:
+        print("SMTP_PASSWORD is not set. Cannot send email.")
+        return
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = f"Promptro Support <{sender_email}>"
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        
+        msg.attach(MIMEText(body, 'plain'))
+        
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+            
+        print(f"Email sent successfully to {to_email}")
+    except Exception as e:
+        print(f"Failed to send email to {to_email}: {e}")
 
 @app.get("/")
 def read_root():
@@ -544,7 +578,7 @@ def update_feedback_status(feedback_id: int, body: schemas.FeedbackStatusUpdate,
     return feedback
 
 @app.post("/api/feedback/{feedback_id}/reply", response_model=schemas.FeedbackOut)
-def reply_to_feedback(feedback_id: int, body: schemas.FeedbackReply, db: Session = Depends(get_db)):
+def reply_to_feedback(feedback_id: int, body: schemas.FeedbackReply, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     feedback = db.query(models.Feedback).filter(models.Feedback.id == feedback_id).first()
     if not feedback:
         raise HTTPException(status_code=404, detail="Feedback not found")
@@ -553,6 +587,18 @@ def reply_to_feedback(feedback_id: int, body: schemas.FeedbackReply, db: Session
     feedback.status = "replied"
     db.commit()
     db.refresh(feedback)
+    
+    if feedback.email and feedback.email != "N/A" and "@" in feedback.email:
+        email_subject = f"Re: {feedback.subject or 'Promptro Support Inquiry'}"
+        email_body = (
+            f"Hello {feedback.user or 'Customer'},\n\n"
+            f"{body.reply_text}\n\n"
+            f"Best regards,\n"
+            f"Promptro Support Team\n"
+            f"support.promptro@gmail.com"
+        )
+        background_tasks.add_task(send_email_background, feedback.email, email_subject, email_body)
+        
     return feedback
 
 @app.get("/api/feedback/stats")
