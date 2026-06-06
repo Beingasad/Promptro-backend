@@ -289,7 +289,8 @@ def send_email_background(to_email: str, subject: str, body: str):
         url = "https://api.resend.com/emails"
         headers = {
             "Authorization": f"Bearer {resend_api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         payload = {
             "from": f"Promptro <{sender_email}>",
