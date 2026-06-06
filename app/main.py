@@ -1343,3 +1343,89 @@ def check_email(email: str, db: Session = Depends(get_db)):
     if profile:
         return {"exists": True, "provider": profile.provider}
     return {"exists": False}
+
+
+# --- ADMIN USER MANAGEMENT ENDPOINTS ---
+
+@app.get("/api/admin/users")
+def get_admin_users(db: Session = Depends(get_db)):
+    profiles = db.query(models.UserProfile).all()
+    result = []
+    for p in profiles:
+        # Get user activity
+        activity = db.query(models.UserActivity).filter(
+            models.UserActivity.user_id == p.firebase_uid
+        ).first()
+        
+        # Get user consent
+        consent = db.query(models.UserConsent).filter(
+            models.UserConsent.user_id == p.firebase_uid
+        ).first()
+        
+        saved_count = len(activity.saved_prompts) if activity and activity.saved_prompts else 0
+        liked_count = len(activity.liked_prompts) if activity and activity.liked_prompts else 0
+        recent_count = len(activity.recent_prompts) if activity and activity.recent_prompts else 0
+        
+        result.append({
+            "firebase_uid": p.firebase_uid,
+            "first_name": p.first_name,
+            "last_name": p.last_name,
+            "gender": p.gender,
+            "email": p.email,
+            "provider": p.provider,
+            "terms_accepted": p.terms_accepted,
+            "terms_accepted_at": p.terms_accepted_at,
+            "email_verified": p.email_verified,
+            "created_at": p.created_at,
+            "activity": {
+                "saved_count": saved_count,
+                "liked_count": liked_count,
+                "recent_count": recent_count,
+                "updated_at": activity.updated_at if activity else None
+            },
+            "consent": {
+                "cookie_consent_status": consent.cookie_consent_status if consent else "pending",
+                "privacy_accepted_at": consent.privacy_accepted_at if consent else None
+            }
+        })
+    return result
+
+
+@app.delete("/api/admin/users/{firebase_uid}")
+def delete_admin_user(firebase_uid: str, db: Session = Depends(get_db)):
+    # Find user profile
+    profile = db.query(models.UserProfile).filter(
+        models.UserProfile.firebase_uid == firebase_uid
+    ).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="User profile not found")
+        
+    user_email = profile.email
+    
+    # 1. Delete from UserProfile
+    db.delete(profile)
+    
+    # 2. Delete from UserActivity
+    db.query(models.UserActivity).filter(
+        models.UserActivity.user_id == firebase_uid
+    ).delete()
+    
+    # 3. Delete from UserConsent
+    db.query(models.UserConsent).filter(
+        models.UserConsent.user_id == firebase_uid
+    ).delete()
+    
+    # 4. Delete from SavedPrompt
+    db.query(models.SavedPrompt).filter(
+        models.SavedPrompt.user_id == firebase_uid
+    ).delete()
+    
+    # 5. Delete from OTPVerification
+    if user_email:
+        db.query(models.OTPVerification).filter(
+            models.OTPVerification.email == user_email
+        ).delete()
+        
+    db.commit()
+    return {"status": "success", "message": f"User {firebase_uid} permanently removed from database."}
+
