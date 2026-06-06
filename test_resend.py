@@ -15,14 +15,14 @@ headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
-recipient = "asadansari07518@gmail.com"
+recipient = "asadansari05613@gmail.com"
 print(f"Sending test email to: {recipient}...")
 
 payload = {
-    "from": "Promptro <onboarding@resend.dev>",
+    "from": "Promptro <otp@promptro.in>",
     "to": [recipient],
     "subject": "Resend API Test Connection",
-    "text": "Hello! If you are reading this, your Resend API integration is working perfectly."
+    "text": "Hello! If you are reading this, your Resend API integration with promptro.in domain is working perfectly."
 }
 
 req = urllib.request.Request(
