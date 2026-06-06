@@ -276,6 +276,43 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
         raise HTTPException(status_code=500, detail=f"Local image upload failed: {str(e)}")
 
 def send_email_background(to_email: str, subject: str, body: str):
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    if resend_api_key:
+        import urllib.request
+        import json
+
+        print("Using Resend API to send email...")
+        sender_email = os.getenv("SMTP_USER", "onboarding@resend.dev")
+        if "onboarding@resend.dev" in sender_email or not os.getenv("SMTP_USER"):
+            sender_email = "onboarding@resend.dev"
+
+        url = "https://api.resend.com/emails"
+        headers = {
+            "Authorization": f"Bearer {resend_api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "from": f"Promptro <{sender_email}>",
+            "to": [to_email],
+            "subject": subject,
+            "text": body
+        }
+        
+        try:
+            req = urllib.request.Request(
+                url, 
+                data=json.dumps(payload).encode('utf-8'), 
+                headers=headers, 
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                res_body = response.read().decode('utf-8')
+                print(f"Email sent successfully via Resend to {to_email}: {res_body}")
+        except Exception as e:
+            print(f"Failed to send email via Resend to {to_email}: {e}")
+        return
+
+    # Fallback to local SMTP
     import smtplib
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
