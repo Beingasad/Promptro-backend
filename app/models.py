@@ -131,12 +131,23 @@ class UserProfile(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     firebase_uid = Column(String, unique=True, index=True)
-    first_name = Column(String)
-    last_name = Column(String, nullable=True)
+    first_name = Column("firstName", String)
+    last_name = Column("lastName", String, nullable=True)
     gender = Column(String, nullable=True)
     email = Column(String)
     provider = Column(String, default="email")  # "email" or "google"
-    terms_accepted = Column(Boolean, default=False)
-    terms_accepted_at = Column(DateTime(timezone=True), nullable=True)
-    email_verified = Column(Boolean, default=False)
+    terms_accepted = Column("termsAccepted", Boolean, default=False)
+    terms_accepted_at = Column("termsAcceptedAt", DateTime(timezone=True), nullable=True)
+    email_verified = Column("emailVerified", Boolean, default=False)
+    created_at = Column("createdAt", DateTime(timezone=True), server_default=func.now())
+
+
+class EmailVerificationToken(Base):
+    __tablename__ = "email_verification_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, index=True)
+    token = Column(String, unique=True, index=True)
+    expires_at = Column(DateTime(timezone=True))
+    verified = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

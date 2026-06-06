@@ -9,8 +9,22 @@ import cloudinary.uploader
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-
 load_dotenv()
+
+import firebase_admin
+from firebase_admin import credentials, auth as firebase_auth
+
+# Initialize Firebase Admin SDK
+firebase_key_path = Path(__file__).resolve().parent.parent / "firebase-service-account.json"
+if firebase_key_path.exists():
+    try:
+        cred = credentials.Certificate(str(firebase_key_path))
+        firebase_admin.initialize_app(cred)
+        print("Firebase Admin SDK initialized successfully!")
+    except Exception as e:
+        print(f"Error initializing Firebase Admin SDK: {e}")
+else:
+    print(f"Firebase Service Account Key not found at {firebase_key_path}")
 
 from app import models, schemas
 from app.database import engine, get_db
@@ -66,6 +80,9 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 # Configure CORS
 allow_origins = [
     "http://localhost:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
     "https://promptro-frontend.vercel.app",
     "https://promptro.in",
     "https://www.promptro.in"
@@ -275,7 +292,14 @@ async def resolve_image_url(image: UploadFile | None, fallback_url: str = ""):
         print(f"ERROR: Local upload failed: {e}")
         raise HTTPException(status_code=500, detail=f"Local image upload failed: {str(e)}")
 
-def send_email_background(to_email: str, subject: str, body: str):
+def send_email_background(to_email: str, subject: str, body: str, html: str = None):
+    print(f"\n==================================================")
+    print(f"[DEBUG EMAIL] Sending to: {to_email}")
+    print(f"[DEBUG EMAIL] Subject: {subject}")
+    print(f"[DEBUG EMAIL] Plain Body: {body}")
+    if html:
+        print(f"[DEBUG EMAIL] HTML length: {len(html)}")
+    print(f"==================================================\n")
     resend_api_key = os.getenv("RESEND_API_KEY")
     if resend_api_key:
         import urllib.request
@@ -296,8 +320,13 @@ def send_email_background(to_email: str, subject: str, body: str):
             "from": f"Promptro <{sender_email}>",
             "to": [to_email],
             "subject": subject,
-            "text": body
         }
+        if html:
+            payload["html"] = html
+            if body:
+                payload["text"] = body
+        else:
+            payload["text"] = body
         
         try:
             req = urllib.request.Request(
@@ -333,7 +362,10 @@ def send_email_background(to_email: str, subject: str, body: str):
         msg['To'] = to_email
         msg['Subject'] = subject
         
-        msg.attach(MIMEText(body, 'plain'))
+        if html:
+            msg.attach(MIMEText(html, 'html'))
+        else:
+            msg.attach(MIMEText(body, 'plain'))
         
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
@@ -1138,16 +1170,39 @@ def get_analytics_summary(db: Session = Depends(get_db)):
 
 @app.get("/api/consent/{user_id}", response_model=schemas.ConsentStatusOut)
 def get_user_consent(user_id: str, db: Session = Depends(get_db)):
+    profile = db.query(models.UserProfile).filter(models.UserProfile.firebase_uid == user_id).first()
     consent = db.query(models.UserConsent).filter(models.UserConsent.user_id == user_id).first()
-    if not consent:
-        return {
-            "user_id": user_id,
-            "terms_accepted": False,
-            "terms_accepted_at": None,
-            "privacy_accepted_at": None,
-            "cookie_consent_status": "pending"
-        }
-    return consent
+    
+    terms_accepted = False
+    terms_accepted_at = None
+    privacy_accepted_at = None
+    cookie_consent_status = "pending"
+    email = None
+    
+    if profile:
+        terms_accepted = profile.terms_accepted
+        terms_accepted_at = profile.terms_accepted_at
+        privacy_accepted_at = profile.terms_accepted_at
+        email = profile.email
+        
+    if consent:
+        if consent.terms_accepted:
+            terms_accepted = True
+            terms_accepted_at = consent.terms_accepted_at
+        privacy_accepted_at = consent.privacy_accepted_at or terms_accepted_at
+        cookie_consent_status = consent.cookie_consent_status
+        if not email:
+            email = consent.email
+            
+    return {
+        "id": consent.id if consent else 0,
+        "user_id": user_id,
+        "email": email,
+        "terms_accepted": terms_accepted,
+        "terms_accepted_at": terms_accepted_at,
+        "privacy_accepted_at": privacy_accepted_at,
+        "cookie_consent_status": cookie_consent_status
+    }
 
 
 @app.post("/api/consent/accept", response_model=schemas.ConsentStatusOut)
@@ -1171,9 +1226,24 @@ def accept_user_consent(consent_data: schemas.ConsentAccept, db: Session = Depen
         consent.privacy_accepted_at = now
         if consent_data.email:
             consent.email = consent_data.email
+            
+    # Update user profile as well
+    profile = db.query(models.UserProfile).filter(models.UserProfile.firebase_uid == consent_data.user_id).first()
+    if profile:
+        profile.terms_accepted = True
+        profile.terms_accepted_at = now
+        
     db.commit()
     db.refresh(consent)
-    return consent
+    return {
+        "id": consent.id,
+        "user_id": consent.user_id,
+        "email": consent.email,
+        "terms_accepted": consent.terms_accepted,
+        "terms_accepted_at": consent.terms_accepted_at,
+        "privacy_accepted_at": consent.privacy_accepted_at,
+        "cookie_consent_status": consent.cookie_consent_status
+    }
 
 
 @app.post("/api/consent/cookie")
@@ -1309,7 +1379,7 @@ def register_profile(body: schemas.UserProfileCreate, db: Session = Depends(get_
         provider=body.provider or "email",
         terms_accepted=body.terms_accepted,
         terms_accepted_at=now if body.terms_accepted else None,
-        email_verified=False
+        email_verified=True if body.provider == "google" else False
     )
     db.add(profile)
     db.commit()
@@ -1467,4 +1537,308 @@ def delete_admin_user(firebase_uid: str, db: Session = Depends(get_db)):
         
     db.commit()
     return {"status": "success", "message": f"User {firebase_uid} permanently removed from database."}
+
+
+@app.post("/api/auth/send-verification")
+def send_verification(body: schemas.VerificationRequest, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    import secrets
+    from datetime import datetime, timedelta
+    
+    email = body.email.strip().lower()
+    firebase_uid = body.firebase_uid.strip()
+    
+    # 1. Check if user profile exists
+    profile = db.query(models.UserProfile).filter(
+        models.UserProfile.firebase_uid == firebase_uid
+    ).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="User profile not found")
+        
+    # 2. Check if already verified
+    if profile.email_verified:
+        return {"status": "already_verified", "message": "Email is already verified"}
+        
+    # 3. Generate secure token
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(hours=24)
+    
+    # 4. Save to DB
+    verification_record = models.EmailVerificationToken(
+        email=email,
+        token=token,
+        expires_at=expires_at,
+        verified=False
+    )
+    db.add(verification_record)
+    db.commit()
+    
+    # 5. Build verification link
+    # We can detect the origin from request headers (fallback to promptro.in)
+    origin = request.headers.get("origin") or "https://promptro.in"
+    verification_link = f"{origin}/verify-email?token={token}"
+    
+    # 6. HTML template
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Verify Your Promptro Account</title>
+  <style>
+    body {{
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f6f5fa;
+      color: #171421;
+      margin: 0;
+      padding: 0;
+    }}
+    .container {{
+      max-width: 600px;
+      margin: 40px auto;
+      background: #ffffff;
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+      border: 1px solid #e9e2f3;
+    }}
+    .header {{
+      background: linear-gradient(135deg, #8b5cf6 0%, #ff6a3d 100%);
+      padding: 40px 20px;
+      text-align: center;
+    }}
+    .header h1 {{
+      color: #ffffff;
+      margin: 0;
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }}
+    .content {{
+      padding: 40px 30px;
+      text-align: center;
+    }}
+    .content h1 {{
+      font-size: 24px;
+      font-weight: 800;
+      margin-bottom: 16px;
+      color: #171421;
+    }}
+    .content p {{
+      font-size: 14px;
+      line-height: 1.6;
+      color: #5f5774;
+      margin-bottom: 30px;
+    }}
+    .btn {{
+      display: inline-block;
+      padding: 14px 36px;
+      background: linear-gradient(135deg, #8b5cf6 0%, #ff6a3d 100%);
+      color: #ffffff !important;
+      text-decoration: none;
+      font-weight: bold;
+      border-radius: 9999px;
+      box-shadow: 0 10px 20px rgba(139, 92, 246, 0.2);
+      font-size: 14px;
+    }}
+    .footer {{
+      background-color: #faf9fc;
+      padding: 24px;
+      text-align: center;
+      font-size: 11px;
+      color: #978eaa;
+      border-top: 1px solid #e9e2f3;
+    }}
+    .footer a {{
+      color: #8b5cf6;
+      text-decoration: none;
+      font-weight: bold;
+    }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Promptro</h1>
+    </div>
+    <div class="content">
+      <h1>Verify Your Email Address</h1>
+      <p>Thank you for signing up for Promptro! Please verify your email address to secure your account and unlock all premium features of the Promptro platform.</p>
+      <a href="{verification_link}" class="btn">Verify Email Address</a>
+      <p style="margin-top: 30px; font-size: 12px; color: #978eaa;">If the button doesn't work, copy and paste this link into your browser:<br>
+      <a href="{verification_link}" style="color: #8b5cf6; word-break: break-all;">{verification_link}</a></p>
+    </div>
+    <div class="footer">
+      <p>&copy; 2026 Promptro. All rights reserved.</p>
+      <p>If you did not sign up for an account, you can safely ignore this email.</p>
+    </div>
+  </div>
+</body>
+</html>
+"""
+    subject = "Verify your Promptro account"
+    body_text = f"Please verify your Promptro account by clicking this link: {verification_link}"
+    
+    background_tasks.add_task(send_email_background, email, subject, body_text, html_content)
+    return {"status": "sent", "message": "Verification email sent"}
+
+
+@app.post("/api/auth/confirm-verification")
+def confirm_verification(body: schemas.ConfirmVerificationRequest, db: Session = Depends(get_db)):
+    from datetime import datetime
+    
+    token = body.token.strip()
+    
+    # 1. Find the token
+    record = db.query(models.EmailVerificationToken).filter(
+        models.EmailVerificationToken.token == token,
+        models.EmailVerificationToken.verified == False
+    ).first()
+    
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid or already used verification token")
+        
+    # 2. Check expiry
+    if datetime.utcnow() > record.expires_at.replace(tzinfo=None):
+         raise HTTPException(status_code=400, detail="Verification token has expired. Please request a new one.")
+         
+    # 3. Mark token as verified
+    record.verified = True
+    
+    # 4. Find user profile and mark as verified
+    profile = db.query(models.UserProfile).filter(
+        models.UserProfile.email == record.email
+    ).first()
+    if profile:
+        profile.email_verified = True
+        db.commit()
+        return {"status": "success", "message": "Email verified successfully"}
+    else:
+        db.commit()
+        raise HTTPException(status_code=404, detail="User profile not found for this email")
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(body: schemas.OTPRequest, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+    
+    # 1. Verify user profile exists in database
+    profile = db.query(models.UserProfile).filter(
+        models.UserProfile.email == email
+    ).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="No account found with this email address.")
+    
+    if profile.provider == "google":
+        raise HTTPException(status_code=400, detail="This account is registered via Google. Please log in using Google.")
+
+    # 2. Check if Firebase Admin is initialized
+    try:
+        # Generate password reset link via Firebase Admin SDK
+        reset_link = firebase_auth.generate_password_reset_link(email)
+    except Exception as e:
+        print(f"Failed to generate Firebase password reset link: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate password reset request: {str(e)}")
+
+    # 3. Build HTML reset email using Resend
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Reset Your Promptro Password</title>
+  <style>
+    body {{
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f6f5fa;
+      color: #171421;
+      margin: 0;
+      padding: 0;
+    }}
+    .container {{
+      max-width: 600px;
+      margin: 40px auto;
+      background: #ffffff;
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+      border: 1px solid #e9e2f3;
+    }}
+    .header {{
+      background: linear-gradient(135deg, #8b5cf6 0%, #ff6a3d 100%);
+      padding: 40px 20px;
+      text-align: center;
+    }}
+    .header h1 {{
+      color: #ffffff;
+      margin: 0;
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }}
+    .content {{
+      padding: 40px 30px;
+      text-align: center;
+    }}
+    .content h1 {{
+      font-size: 24px;
+      font-weight: 800;
+      margin-bottom: 16px;
+      color: #171421;
+    }}
+    .content p {{
+      font-size: 14px;
+      line-height: 1.6;
+      color: #5f5774;
+      margin-bottom: 30px;
+    }}
+    .btn {{
+      display: inline-block;
+      padding: 14px 36px;
+      background: linear-gradient(135deg, #8b5cf6 0%, #ff6a3d 100%);
+      color: #ffffff !important;
+      text-decoration: none;
+      font-weight: bold;
+      border-radius: 9999px;
+      box-shadow: 0 10px 20px rgba(139, 92, 246, 0.2);
+      font-size: 14px;
+    }}
+    .footer {{
+      background-color: #faf9fc;
+      padding: 24px;
+      text-align: center;
+      font-size: 11px;
+      color: #978eaa;
+      border-top: 1px solid #e9e2f3;
+    }}
+    .footer a {{
+      color: #8b5cf6;
+      text-decoration: none;
+      font-weight: bold;
+    }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Promptro</h1>
+    </div>
+    <div class="content">
+      <h1>Reset Your Password</h1>
+      <p>Hello, we received a request to reset your password for your Promptro account. Click the button below to choose a new password. This link will expire shortly.</p>
+      <a href="{reset_link}" class="btn">Reset Password</a>
+      <p style="margin-top: 30px; font-size: 12px; color: #978eaa;">If the button doesn't work, copy and paste this link into your browser:<br>
+      <a href="{reset_link}" style="color: #8b5cf6; word-break: break-all;">{reset_link}</a></p>
+    </div>
+    <div class="footer">
+      <p>&copy; 2026 Promptro. All rights reserved.</p>
+      <p>If you did not request a password reset, you can safely ignore this email.</p>
+    </div>
+  </div>
+</body>
+</html>
+"""
+    subject = "Reset your Promptro password"
+    body_text = f"Please reset your Promptro password by clicking this link: {reset_link}"
+    
+    background_tasks.add_task(send_email_background, email, subject, body_text, html_content)
+    return {"status": "sent", "message": "Password reset email sent successfully"}
+
 

@@ -1,11 +1,14 @@
 import os
+from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# Using sqlite by default for local dev to avoid setup issues.
-# For production, change this to your hosted PostgreSQL URL (e.g. Supabase or Render DB)
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./promptro.db")
+# Resolve SQLite path relative to project structure so it works regardless of Cwd
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+default_db_path = BASE_DIR / "promptro.db"
+
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{default_db_path.as_posix()}")
 
 # check_same_thread is needed only for SQLite
 connect_args = {"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}

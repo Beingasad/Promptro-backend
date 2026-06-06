@@ -208,3 +208,12 @@ class UserProfileOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class VerificationRequest(BaseModel):
+    email: str
+    firebase_uid: str
+
+
+class ConfirmVerificationRequest(BaseModel):
+    token: str
