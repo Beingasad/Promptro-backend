@@ -660,10 +660,14 @@ def delete_banner(banner_id: int, db: Session = Depends(get_db)):
 @app.get("/api/notifications")
 async def get_notifications(db: Session = Depends(get_db)):
     notifications = []
+    from datetime import datetime, timedelta
+    three_days_ago = datetime.utcnow() - timedelta(days=3)
     
-    # 1. Fetch manual persistent admin notifications from the database
+    # 1. Fetch manual persistent admin notifications from the database (only last 3 days)
     try:
-        manual_notifs = db.query(models.Notification).order_by(models.Notification.created_at.desc()).all()
+        manual_notifs = db.query(models.Notification).filter(
+            models.Notification.created_at >= three_days_ago
+        ).order_by(models.Notification.created_at.desc()).all()
         for m in manual_notifs:
             notifications.append({
                 "id": f"manual-{m.id}",
@@ -674,8 +678,11 @@ async def get_notifications(db: Session = Depends(get_db)):
     except Exception as e:
         print("Error fetching manual notifications:", e)
     
-    # 2. Check for featured prompts
-    featured = db.query(models.Prompt).filter(models.Prompt.featured == True).order_by(models.Prompt.created_at.desc()).first()
+    # 2. Check for featured prompts (only last 3 days)
+    featured = db.query(models.Prompt).filter(
+        models.Prompt.featured == True,
+        models.Prompt.created_at >= three_days_ago
+    ).order_by(models.Prompt.created_at.desc()).first()
     if featured:
         notifications.append({
             "id": f"featured-{featured.id}",
@@ -684,15 +691,19 @@ async def get_notifications(db: Session = Depends(get_db)):
             "link": f"/prompt/{featured.id}"
         })
 
-    # 3. Check for latest prompts
-    latest = db.query(models.Prompt).order_by(models.Prompt.created_at.desc()).first()
+    # 3. Check for latest prompts (only last 3 days)
+    latest = db.query(models.Prompt).filter(
+        models.Prompt.created_at >= three_days_ago
+    ).order_by(models.Prompt.created_at.desc()).first()
     if latest:
-        notifications.append({
-            "id": f"latest-{latest.id}",
-            "text": f"New Drop: {latest.title} added to {latest.category}",
-            "type": "update",
-            "link": f"/prompt/{latest.id}"
-        })
+        # Avoid duplicates if latest is same as featured
+        if not featured or latest.id != featured.id:
+            notifications.append({
+                "id": f"latest-{latest.id}",
+                "text": f"New Drop: {latest.title} added to {latest.category}",
+                "type": "update",
+                "link": f"/prompt/{latest.id}"
+            })
 
     # 4. Showcase Creator Feature Announcement
     notifications.append({
