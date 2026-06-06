@@ -78,13 +78,25 @@ class FeedbackCreate(BaseModel):
     subject: Optional[str] = "General Feedback"
     message: str
 
-class FeedbackOut(FeedbackCreate):
+class FeedbackOut(BaseModel):
     id: int
+    user: Optional[str] = "Guest"
+    email: Optional[str] = "N/A"
+    subject: Optional[str] = "General Feedback"
+    message: str
     status: str
+    reply_text: Optional[str] = None
+    replied_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+class FeedbackStatusUpdate(BaseModel):
+    status: str  # "unread" / "read" / "replied" / "resolved"
+
+class FeedbackReply(BaseModel):
+    reply_text: str
 
 class BannerBase(BaseModel):
     tag_text: str

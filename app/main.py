@@ -533,6 +533,47 @@ def delete_feedback(feedback_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "deleted", "id": feedback_id}
 
+@app.patch("/api/feedback/{feedback_id}/status", response_model=schemas.FeedbackOut)
+def update_feedback_status(feedback_id: int, body: schemas.FeedbackStatusUpdate, db: Session = Depends(get_db)):
+    feedback = db.query(models.Feedback).filter(models.Feedback.id == feedback_id).first()
+    if not feedback:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    feedback.status = body.status
+    db.commit()
+    db.refresh(feedback)
+    return feedback
+
+@app.post("/api/feedback/{feedback_id}/reply", response_model=schemas.FeedbackOut)
+def reply_to_feedback(feedback_id: int, body: schemas.FeedbackReply, db: Session = Depends(get_db)):
+    feedback = db.query(models.Feedback).filter(models.Feedback.id == feedback_id).first()
+    if not feedback:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    feedback.reply_text = body.reply_text
+    feedback.replied_at = func.now()
+    feedback.status = "replied"
+    db.commit()
+    db.refresh(feedback)
+    return feedback
+
+@app.get("/api/feedback/stats")
+def get_feedback_stats(db: Session = Depends(get_db)):
+    total = db.query(models.Feedback).count()
+    unread = db.query(models.Feedback).filter(models.Feedback.status == "unread").count()
+    read_count = db.query(models.Feedback).filter(models.Feedback.status == "read").count()
+    replied = db.query(models.Feedback).filter(models.Feedback.status == "replied").count()
+    resolved = db.query(models.Feedback).filter(models.Feedback.status == "resolved").count()
+    open_tickets = unread + read_count
+    response_rate = round((replied + resolved) / total * 100, 1) if total > 0 else 0
+    return {
+        "total": total,
+        "unread": unread,
+        "read": read_count,
+        "replied": replied,
+        "resolved": resolved,
+        "open_tickets": open_tickets,
+        "response_rate": response_rate
+    }
+
 # --- BANNERS ---
 @app.get("/api/banners", response_model=list[schemas.BannerOut])
 def get_banners(active_only: bool = False, db: Session = Depends(get_db)):

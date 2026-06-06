@@ -55,6 +55,8 @@ class Feedback(Base):
     subject = Column(String, default="General Feedback")
     message = Column(Text)
     status = Column(String, default="unread")
+    reply_text = Column(Text, nullable=True)
+    replied_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Banner(Base):
