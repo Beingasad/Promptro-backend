@@ -1574,6 +1574,46 @@ def get_user_profile(firebase_uid: str, db: Session = Depends(get_db)):
     return profile
 
 
+@app.put("/api/auth/profile/{firebase_uid}", response_model=schemas.UserProfileOut)
+def update_user_profile(firebase_uid: str, body: schemas.UserProfileUpdate, db: Session = Depends(get_db)):
+    profile = db.query(models.UserProfile).filter(
+        models.UserProfile.firebase_uid == firebase_uid
+    ).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    if body.username is not None:
+        username_clean = body.username.strip()
+        if username_clean:
+            # Check if this username is already taken by another user
+            if username_clean != profile.username:
+                existing = db.query(models.UserProfile).filter(
+                    models.UserProfile.username == username_clean
+                ).first()
+                if existing:
+                    raise HTTPException(status_code=400, detail="Username is already taken")
+            profile.username = username_clean
+        else:
+            profile.username = None
+
+    if body.first_name is not None:
+        first_name_clean = body.first_name.strip()
+        if not first_name_clean:
+            raise HTTPException(status_code=400, detail="First name cannot be empty")
+        profile.first_name = first_name_clean
+
+    if body.last_name is not None:
+        profile.last_name = body.last_name.strip() if body.last_name.strip() else None
+
+    if body.gender is not None:
+        profile.gender = body.gender.strip() if body.gender.strip() else None
+
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+
 @app.patch("/api/auth/profile/{firebase_uid}/verify-email")
 def verify_user_email(firebase_uid: str, db: Session = Depends(get_db)):
     profile = db.query(models.UserProfile).filter(
