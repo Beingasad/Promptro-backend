@@ -8,7 +8,7 @@ conn = sqlite3.connect(db_path)
 cur = conn.cursor()
 
 email = "testuser@example.com"
-cur.execute("SELECT id, firstName, lastName, provider, termsAccepted, termsAcceptedAt, emailVerified, createdAt FROM user_profiles WHERE email = ?", (email,))
+cur.execute("SELECT id, first_name, last_name, provider, terms_accepted, terms_accepted_at, email_verified, created_at FROM user_profiles WHERE email = ?", (email,))
 row = cur.fetchone()
 
 if row:
