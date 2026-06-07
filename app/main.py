@@ -991,6 +991,17 @@ def get_user_activity(user_id: str, db: Session = Depends(get_db)):
         }
     return activity
 
+@app.get("/api/collections/{collection_id}")
+def get_public_collection(collection_id: str, db: Session = Depends(get_db)):
+    activities = db.query(models.UserActivity).filter(models.UserActivity.collections.isnot(None)).all()
+    for act in activities:
+        collections = act.collections
+        if isinstance(collections, list):
+            for col in collections:
+                if col.get("id") == collection_id:
+                    return col
+    raise HTTPException(status_code=404, detail="Collection not found")
+
 @app.post("/api/users/{user_id}/activity", response_model=schemas.UserActivityOut)
 def save_user_activity(
     user_id: str,
