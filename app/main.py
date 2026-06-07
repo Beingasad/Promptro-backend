@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Req
 from fastapi.responses import Response, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 import uuid
 import cloudinary
@@ -75,6 +76,31 @@ from app import models, schemas
 from app.database import engine, get_db
 
 models.Base.metadata.create_all(bind=engine)
+
+def ensure_runtime_schema():
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "sqlite":
+                columns = {
+                    row[1]
+                    for row in conn.execute(text("PRAGMA table_info(user_profiles)")).fetchall()
+                }
+                if "username" not in columns:
+                    conn.execute(text("ALTER TABLE user_profiles ADD COLUMN username VARCHAR"))
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_user_profiles_username "
+                    "ON user_profiles (username)"
+                ))
+            else:
+                conn.execute(text("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS username VARCHAR"))
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_user_profiles_username "
+                    "ON user_profiles (username)"
+                ))
+    except Exception as e:
+        print(f"Runtime schema check failed: {e}")
+
+ensure_runtime_schema()
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -348,6 +374,7 @@ def send_email_background(to_email: str, subject: str, body: str, html: str = No
     resend_api_key = os.getenv("RESEND_API_KEY")
     if resend_api_key:
         import urllib.request
+        import urllib.error
         import json
 
         print("Using Resend API to send email...")
@@ -383,9 +410,14 @@ def send_email_background(to_email: str, subject: str, body: str, html: str = No
             with urllib.request.urlopen(req, timeout=10) as response:
                 res_body = response.read().decode('utf-8')
                 print(f"Email sent successfully via Resend to {to_email}: {res_body}")
+                return {"provider": "resend", "response": res_body}
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8", errors="replace")
+            print(f"Failed to send email via Resend to {to_email}: {e.code} {e.reason} {error_body}")
+            raise RuntimeError(f"Resend email failed: {e.code} {error_body}") from e
         except Exception as e:
             print(f"Failed to send email via Resend to {to_email}: {e}")
-        return
+            raise RuntimeError(f"Resend email failed: {e}") from e
 
     # Fallback to local SMTP
     import smtplib
@@ -399,7 +431,7 @@ def send_email_background(to_email: str, subject: str, body: str, html: str = No
     
     if not sender_password:
         print("SMTP_PASSWORD is not set. Cannot send email.")
-        return
+        raise RuntimeError("SMTP_PASSWORD is not set. Cannot send email.")
 
     try:
         msg = MIMEMultipart()
@@ -418,8 +450,10 @@ def send_email_background(to_email: str, subject: str, body: str, html: str = No
             server.send_message(msg)
             
         print(f"Email sent successfully to {to_email}")
+        return {"provider": "smtp"}
     except Exception as e:
         print(f"Failed to send email to {to_email}: {e}")
+        raise RuntimeError(f"SMTP email failed: {e}") from e
 
 @app.get("/")
 def read_root():
@@ -1360,7 +1394,7 @@ def send_otp(body: schemas.OTPRequest, background_tasks: BackgroundTasks, db: Se
     db.add(otp_record)
     db.commit()
 
-    # Send OTP email in background
+    # Send OTP email before returning success so delivery/config errors are visible to the UI.
     email_subject = "Your Promptro Verification Code"
     email_body = (
         f"Hello,\n\n"
@@ -1371,7 +1405,12 @@ def send_otp(body: schemas.OTPRequest, background_tasks: BackgroundTasks, db: Se
         f"Promptro Team\n"
         f"https://promptro.in"
     )
-    background_tasks.add_task(send_email_background, email, email_subject, email_body)
+    try:
+        send_email_background(email, email_subject, email_body)
+    except Exception as e:
+        db.delete(otp_record)
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Failed to send OTP email: {str(e)}")
 
     return {"status": "sent", "message": "OTP sent to your email"}
 
