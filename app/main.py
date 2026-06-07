@@ -1397,17 +1397,105 @@ def send_otp(body: schemas.OTPRequest, background_tasks: BackgroundTasks, db: Se
 
     # Send OTP email before returning success so delivery/config errors are visible to the UI.
     email_subject = "Your Promptro Verification Code"
-    email_body = (
-        f"Hello,\n\n"
-        f"Your Promptro verification code is: {otp_code}\n\n"
-        f"This code will expire in 5 minutes.\n"
-        f"If you didn't request this code, please ignore this email.\n\n"
-        f"Best regards,\n"
-        f"Promptro Team\n"
-        f"https://promptro.in"
-    )
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Verify Your Promptro Account</title>
+  <style>
+    body {{
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f6f5fa;
+      color: #171421;
+      margin: 0;
+      padding: 0;
+    }}
+    .container {{
+      max-width: 600px;
+      margin: 40px auto;
+      background: #ffffff;
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+      border: 1px solid #e9e2f3;
+    }}
+    .header {{
+      background: linear-gradient(135deg, #8b5cf6 0%, #ff6a3d 100%);
+      padding: 40px 20px;
+      text-align: center;
+    }}
+    .header h1 {{
+      color: #ffffff;
+      margin: 0;
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }}
+    .content {{
+      padding: 40px 30px;
+      text-align: center;
+    }}
+    .content h1 {{
+      font-size: 24px;
+      font-weight: 800;
+      margin-bottom: 16px;
+      color: #171421;
+    }}
+    .content p {{
+      font-size: 14px;
+      line-height: 1.6;
+      color: #5f5774;
+      margin-bottom: 30px;
+    }}
+    .otp-code {{
+      display: inline-block;
+      font-size: 32px;
+      font-weight: 900;
+      color: #8b5cf6;
+      letter-spacing: 0.15em;
+      padding: 12px 36px;
+      background-color: #f3edff;
+      border-radius: 16px;
+      margin: 20px 0;
+      border: 1px dashed #c0a3ff;
+    }}
+    .footer {{
+      background-color: #faf9fc;
+      padding: 24px;
+      text-align: center;
+      font-size: 11px;
+      color: #978eaa;
+      border-top: 1px solid #e9e2f3;
+    }}
+    .footer a {{
+      color: #8b5cf6;
+      text-decoration: none;
+      font-weight: bold;
+    }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Promptro</h1>
+    </div>
+    <div class="content">
+      <h1>Verify Your Email Address</h1>
+      <p>Hello,</p>
+      <p>Thank you for registering with Promptro! Use the verification code below to complete your sign-up process. This code is valid for <strong>5 minutes</strong>.</p>
+      <div class="otp-code">{otp_code}</div>
+      <p>If you did not request this verification code, you can safely ignore this email.</p>
+    </div>
+    <div class="footer">
+      <p>&copy; 2026 Promptro. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
+"""
+    body_text = f"Hello,\n\nYour Promptro verification code is: {otp_code}\n\nThis code will expire in 5 minutes.\nIf you did not request this code, please ignore this email.\n\nBest regards,\nPromptro Team"
     try:
-        send_email_background(email, email_subject, email_body)
+        send_email_background(email, email_subject, body_text, html_content)
     except Exception as e:
         db.delete(otp_record)
         db.commit()
