@@ -3,4 +3,5 @@ __pycache__/
 .env
 *.pyc
 uploads/
-*.dbgit add .
+*.db
+firebase-service-account.json
