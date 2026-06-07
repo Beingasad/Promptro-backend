@@ -91,12 +91,25 @@ def ensure_runtime_schema():
                     "CREATE UNIQUE INDEX IF NOT EXISTS ix_user_profiles_username "
                     "ON user_profiles (username)"
                 ))
+
+                # Check user_activities for collections column
+                activity_cols = {
+                    row[1]
+                    for row in conn.execute(text("PRAGMA table_info(user_activities)")).fetchall()
+                }
+                if "collections" not in activity_cols:
+                    conn.execute(text("ALTER TABLE user_activities ADD COLUMN collections JSON"))
             else:
                 conn.execute(text("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS username VARCHAR"))
                 conn.execute(text(
                     "CREATE UNIQUE INDEX IF NOT EXISTS ix_user_profiles_username "
                     "ON user_profiles (username)"
                 ))
+                
+                try:
+                    conn.execute(text("ALTER TABLE user_activities ADD COLUMN IF NOT EXISTS collections JSON"))
+                except Exception as ex:
+                    print(f"Failed to add collections column in non-sqlite DB (might already exist): {ex}")
     except Exception as e:
         print(f"Runtime schema check failed: {e}")
 
@@ -965,6 +978,7 @@ def get_user_activity(user_id: str, db: Session = Depends(get_db)):
             "saved_prompts": [],
             "liked_prompts": [],
             "recent_prompts": [],
+            "collections": [],
             "updated_at": datetime.datetime.utcnow()
         }
     return activity
@@ -981,13 +995,15 @@ def save_user_activity(
             user_id=user_id,
             saved_prompts=activity_data.saved_prompts,
             liked_prompts=activity_data.liked_prompts,
-            recent_prompts=activity_data.recent_prompts
+            recent_prompts=activity_data.recent_prompts,
+            collections=activity_data.collections
         )
         db.add(activity)
     else:
         activity.saved_prompts = activity_data.saved_prompts
         activity.liked_prompts = activity_data.liked_prompts
         activity.recent_prompts = activity_data.recent_prompts
+        activity.collections = activity_data.collections
         import datetime
         activity.updated_at = datetime.datetime.utcnow()
         

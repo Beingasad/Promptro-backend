@@ -47,6 +47,7 @@ class UserActivityBase(BaseModel):
     saved_prompts: Optional[List[dict]] = []
     liked_prompts: Optional[List[str]] = []
     recent_prompts: Optional[List[dict]] = []
+    collections: Optional[List[dict]] = []
 
 class UserActivityCreate(UserActivityBase):
     pass

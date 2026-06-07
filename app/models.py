@@ -44,6 +44,7 @@ class UserActivity(Base):
     saved_prompts = Column(JSON, nullable=True, default=[])
     liked_prompts = Column(JSON, nullable=True, default=[])
     recent_prompts = Column(JSON, nullable=True, default=[])
+    collections = Column(JSON, nullable=True, default=[])
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 class Feedback(Base):
