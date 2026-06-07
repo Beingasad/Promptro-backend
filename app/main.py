@@ -367,7 +367,8 @@ def send_email_background(to_email: str, subject: str, body: str, html: str = No
     print(f"\n==================================================")
     print(f"[DEBUG EMAIL] Sending to: {to_email}")
     print(f"[DEBUG EMAIL] Subject: {subject}")
-    print(f"[DEBUG EMAIL] Plain Body: {body}")
+    if body:
+        print(f"[DEBUG EMAIL] Plain body length: {len(body)}")
     if html:
         print(f"[DEBUG EMAIL] HTML length: {len(html)}")
     print(f"==================================================\n")
