@@ -926,7 +926,15 @@ async def get_notifications(db: Session = Depends(get_db)):
         "link": "#showcase"
     })
 
-    # 5. Random system/style tip
+    # 5. Major Update Announcement v1.1.0
+    notifications.append({
+        "id": "release-v1.1.0",
+        "text": "🚀 Release v1.1.0: Private Collections boards, Premium Cover layouts, responsive mobile zoom cropping & Auto profile completion are live!",
+        "type": "new-feature",
+        "link": "/collections"
+    })
+
+    # 6. Random system/style tip
     tips = [
         "Pro Tip: Try 'Cinematic' style for realistic portraits",
         "Your saved board is synced across devices",
