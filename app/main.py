@@ -1521,32 +1521,6 @@ def check_email(email: str, db: Session = Depends(get_db)):
 
 @app.get("/api/admin/users")
 def get_admin_users(db: Session = Depends(get_db)):
-    from datetime import datetime
-    # Sync legacy users from UserConsent who don't have a UserProfile
-    consents = db.query(models.UserConsent).all()
-    for c in consents:
-        if not c.user_id:
-            continue
-        profile_exists = db.query(models.UserProfile).filter(
-            models.UserProfile.firebase_uid == c.user_id
-        ).first()
-        if not profile_exists and c.email:
-            # Create profile from consent details
-            new_profile = models.UserProfile(
-                firebase_uid=c.user_id,
-                first_name="User",
-                last_name=None,
-                gender="Not specified",
-                email=c.email,
-                provider="email",  # default fallback
-                terms_accepted=c.terms_accepted,
-                terms_accepted_at=c.terms_accepted_at,
-                email_verified=False,
-                created_at=c.created_at or datetime.utcnow()
-            )
-            db.add(new_profile)
-    db.commit()
-
     profiles = db.query(models.UserProfile).all()
     result = []
     for p in profiles:
@@ -1584,6 +1558,44 @@ def get_admin_users(db: Session = Depends(get_db)):
             "consent": {
                 "cookie_consent_status": consent.cookie_consent_status if consent else "pending",
                 "privacy_accepted_at": consent.privacy_accepted_at if consent else None
+            }
+        })
+
+    # Include legacy consent-only users without mutating the database during a GET request.
+    profile_uids = {p.firebase_uid for p in profiles if p.firebase_uid}
+    legacy_consents = db.query(models.UserConsent).all()
+    for c in legacy_consents:
+        if not c.user_id or c.user_id in profile_uids:
+            continue
+
+        activity = db.query(models.UserActivity).filter(
+            models.UserActivity.user_id == c.user_id
+        ).first()
+
+        saved_count = len(activity.saved_prompts) if activity and activity.saved_prompts else 0
+        liked_count = len(activity.liked_prompts) if activity and activity.liked_prompts else 0
+        recent_count = len(activity.recent_prompts) if activity and activity.recent_prompts else 0
+
+        result.append({
+            "firebase_uid": c.user_id,
+            "first_name": "User",
+            "last_name": None,
+            "gender": "Not specified",
+            "email": c.email,
+            "provider": "email",
+            "terms_accepted": c.terms_accepted,
+            "terms_accepted_at": c.terms_accepted_at,
+            "email_verified": False,
+            "created_at": c.created_at,
+            "activity": {
+                "saved_count": saved_count,
+                "liked_count": liked_count,
+                "recent_count": recent_count,
+                "updated_at": activity.updated_at if activity else None
+            },
+            "consent": {
+                "cookie_consent_status": c.cookie_consent_status,
+                "privacy_accepted_at": c.privacy_accepted_at
             }
         })
     return result
