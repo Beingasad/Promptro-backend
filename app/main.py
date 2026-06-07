@@ -1567,6 +1567,9 @@ def get_admin_users(db: Session = Depends(get_db)):
     for c in legacy_consents:
         if not c.user_id or c.user_id in profile_uids:
             continue
+        # Skip anonymous/guest users without an email
+        if not c.email or not c.email.strip():
+            continue
 
         activity = db.query(models.UserActivity).filter(
             models.UserActivity.user_id == c.user_id
@@ -1598,12 +1601,22 @@ def get_admin_users(db: Session = Depends(get_db)):
                 "privacy_accepted_at": c.privacy_accepted_at
             }
         })
+
+    # Sort users by registration date descending (latest first)
+    def get_sort_key(item):
+        dt = item.get("created_at")
+        if not dt:
+            return 0.0
+        if hasattr(dt, "timestamp"):
+            return dt.timestamp()
+        return 0.0
+
+    result.sort(key=get_sort_key, reverse=True)
     return result
 
 
 @app.delete("/api/admin/users/{firebase_uid}")
 def delete_admin_user(firebase_uid: str, db: Session = Depends(get_db)):
-    # Find user profile
     profile = db.query(models.UserProfile).filter(
         models.UserProfile.firebase_uid == firebase_uid
     ).first()
@@ -2042,7 +2055,7 @@ def forgot_password_send_otp(body: schemas.OTPRequest, background_tasks: Backgro
 
     # 3. Generate 6-digit OTP code
     otp_code = str(random.randint(100000, 999999))
-    expires_at = datetime.utcnow() + timedelta(minutes=10)
+    expires_at = datetime.utcnow() + timedelta(minutes=5)
 
     # 4. Store OTP in database
     otp_record = models.PasswordResetOTP(
@@ -2141,7 +2154,7 @@ def forgot_password_send_otp(body: schemas.OTPRequest, background_tasks: Backgro
     <div class="content">
       <h1>Reset Your Password</h1>
       <p>Hello,</p>
-      <p>We received a request to reset the password for your Promptro account. Use the verification code below to proceed. This code is valid for <strong>10 minutes</strong>.</p>
+      <p>We received a request to reset the password for your Promptro account. Use the verification code below to proceed. This code is valid for <strong>5 minutes</strong>.</p>
       <div class="otp-code">{otp_code}</div>
       <p>If you did not request a password reset, you can safely ignore this email.</p>
     </div>
@@ -2152,7 +2165,7 @@ def forgot_password_send_otp(body: schemas.OTPRequest, background_tasks: Backgro
 </body>
 </html>
 """
-    body_text = f"Hello,\n\nYour Promptro password reset verification code is: {otp_code}\n\nThis code will expire in 10 minutes.\nIf you did not request a password reset, please ignore this email.\n\nBest regards,\nPromptro Team"
+    body_text = f"Hello,\n\nYour Promptro password reset verification code is: {otp_code}\n\nThis code will expire in 5 minutes.\nIf you did not request a password reset, please ignore this email.\n\nBest regards,\nPromptro Team"
 
     try:
         send_email_background(email, email_subject, body_text, html_content)
