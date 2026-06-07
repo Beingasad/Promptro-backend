@@ -224,3 +224,9 @@ class VerificationRequest(BaseModel):
 
 class ConfirmVerificationRequest(BaseModel):
     token: str
+
+
+class PasswordReset(BaseModel):
+    email: str
+    otp: str
+    new_password: str

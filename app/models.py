@@ -126,6 +126,17 @@ class OTPVerification(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class PasswordResetOTP(Base):
+    __tablename__ = "password_reset_otps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, index=True)
+    otp_code = Column(String)
+    expires_at = Column(DateTime(timezone=True))
+    verified = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class UserProfile(Base):
     __tablename__ = "user_profiles"
 

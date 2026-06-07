@@ -1810,82 +1810,75 @@ def confirm_verification(body: schemas.ConfirmVerificationRequest, db: Session =
     ).first()
     if profile:
         profile.email_verified = True
-        db.commit()
-        return {"status": "success", "message": "Email verified successfully"}
-    else:
-        db.commit()
-        raise HTTPException(status_code=404, detail="User profile not found for this email")
-
-
-@app.post("/api/auth/forgot-password")
-def forgot_password(body: schemas.OTPRequest, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    email = body.email.strip().lower()
+# 2. Delete from UserActivity
+    db.query(models.UserActivity).filter(
+        models.UserActivity.user_id == firebase_uid
+    ).delete()
     
-    # 1. Verify user profile exists in database
+    # 3. Delete from UserConsent
+    db.query(models.UserConsent).filter(
+        models.UserConsent.user_id == firebase_uid
+    ).delete()
+    
+    # 4. Delete from SavedPrompt
+    db.query(models.SavedPrompt).filter(
+        models.SavedPrompt.user_id == firebase_uid
+    ).delete()
+    
+    # 5. Delete from OTPVerification
+    if user_email:
+        db.query(models.OTPVerification).filter(
+            models.OTPVerification.email == user_email
+        ).delete()
+        
+    db.commit()
+    return {"status": "success", "message": f"User {firebase_uid} permanently removed from database."}
+
+
+@app.post("/api/auth/send-verification")
+def send_verification(body: schemas.VerificationRequest, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    import secrets
+    from datetime import datetime, timedelta
+    
+    email = body.email.strip().lower()
+    firebase_uid = body.firebase_uid.strip()
+    
+    # 1. Check if user profile exists
     profile = db.query(models.UserProfile).filter(
-        models.UserProfile.email == email
+        models.UserProfile.firebase_uid == firebase_uid
     ).first()
     if not profile:
-        raise HTTPException(status_code=404, detail="No account found with this email address.")
+        raise HTTPException(status_code=404, detail="User profile not found")
+        
+    # 2. Check if already verified
+    if profile.email_verified:
+        return {"status": "already_verified", "message": "Email is already verified"}
+        
+    # 3. Generate secure token
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(hours=24)
     
-    if profile.provider == "google":
-        raise HTTPException(status_code=400, detail="This account is registered via Google. Please log in using Google.")
-
-    # 2. Generate password reset link via Firebase Admin SDK
-    if not firebase_admin._apps:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Firebase Admin SDK is not configured on the backend. "
-                "Add a Firebase service account JSON file or FIREBASE_* environment variables."
-            )
-        )
-
-    try:
-        try:
-            firebase_user = firebase_auth.get_user_by_email(email)
-        except firebase_auth.UserNotFoundError:
-            display_name = " ".join(
-                part for part in [profile.first_name, profile.last_name] if part
-            ) or email.split("@")[0]
-            previous_uid = profile.firebase_uid
-            firebase_user = firebase_auth.create_user(
-                email=email,
-                display_name=display_name,
-                email_verified=bool(profile.email_verified),
-            )
-            profile.firebase_uid = firebase_user.uid
-            if previous_uid and previous_uid != firebase_user.uid:
-                db.query(models.UserActivity).filter(
-                    models.UserActivity.user_id == previous_uid
-                ).update({models.UserActivity.user_id: firebase_user.uid})
-                db.query(models.UserConsent).filter(
-                    models.UserConsent.user_id == previous_uid
-                ).update({models.UserConsent.user_id: firebase_user.uid})
-                db.query(models.SavedPrompt).filter(
-                    models.SavedPrompt.user_id == previous_uid
-                ).update({models.SavedPrompt.user_id: firebase_user.uid})
-            db.commit()
-
-        provider_ids = {provider.provider_id for provider in firebase_user.provider_data}
-        if provider_ids and "password" not in provider_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="This email is registered with a social login provider. Please log in using the original sign-in method."
-            )
-        reset_link = firebase_auth.generate_password_reset_link(email)
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Failed to generate Firebase password reset link: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate password reset request: {str(e)}")
-
-    # 3. Build HTML reset email using Resend
+    # 4. Save to DB
+    verification_record = models.EmailVerificationToken(
+        email=email,
+        token=token,
+        expires_at=expires_at,
+        verified=False
+    )
+    db.add(verification_record)
+    db.commit()
+    
+    # 5. Build verification link
+    # We can detect the origin from request headers (fallback to promptro.in)
+    origin = request.headers.get("origin") or "https://promptro.in"
+    verification_link = f"{origin}/verify-email?token={token}"
+    
+    # 6. HTML template
     html_content = f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Reset Your Promptro Password</title>
+  <title>Verify Your Promptro Account</title>
   <style>
     body {{
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -1963,24 +1956,284 @@ def forgot_password(body: schemas.OTPRequest, request: Request, background_tasks
       <h1>Promptro</h1>
     </div>
     <div class="content">
-      <h1>Reset Your Password</h1>
-      <p>Hello, we received a request to reset your password for your Promptro account. Click the button below to choose a new password. This link will expire shortly.</p>
-      <a href="{reset_link}" class="btn">Reset Password</a>
+      <h1>Verify Your Email Address</h1>
+      <p>Thank you for signing up for Promptro! Please verify your email address to secure your account and unlock all premium features of the Promptro platform.</p>
+      <a href="{verification_link}" class="btn">Verify Email Address</a>
       <p style="margin-top: 30px; font-size: 12px; color: #978eaa;">If the button doesn't work, copy and paste this link into your browser:<br>
-      <a href="{reset_link}" style="color: #8b5cf6; word-break: break-all;">{reset_link}</a></p>
+      <a href="{verification_link}" style="color: #8b5cf6; word-break: break-all;">{verification_link}</a></p>
     </div>
     <div class="footer">
       <p>&copy; 2026 Promptro. All rights reserved.</p>
-      <p>If you did not request a password reset, you can safely ignore this email.</p>
+      <p>If you did not sign up for an account, you can safely ignore this email.</p>
     </div>
   </div>
 </body>
 </html>
 """
-    subject = "Reset your Promptro password"
-    body_text = f"Please reset your Promptro password by clicking this link: {reset_link}"
+    subject = "Verify your Promptro account"
+    body_text = f"Please verify your Promptro account by clicking this link: {verification_link}"
     
     background_tasks.add_task(send_email_background, email, subject, body_text, html_content)
-    return {"status": "sent", "message": "Password reset email sent successfully"}
+    return {"status": "sent", "message": "Verification email sent"}
 
 
+@app.post("/api/auth/confirm-verification")
+def confirm_verification(body: schemas.ConfirmVerificationRequest, db: Session = Depends(get_db)):
+    from datetime import datetime
+    
+    token = body.token.strip()
+    
+    # 1. Find the token
+    record = db.query(models.EmailVerificationToken).filter(
+        models.EmailVerificationToken.token == token,
+        models.EmailVerificationToken.verified == False
+    ).first()
+    
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid or already used verification token")
+        
+    # 2. Check expiry
+    if datetime.utcnow() > record.expires_at.replace(tzinfo=None):
+         raise HTTPException(status_code=400, detail="Verification token has expired. Please request a new one.")
+         
+    # 3. Mark token as verified
+    record.verified = True
+    
+    # 4. Find user profile and mark as verified
+    profile = db.query(models.UserProfile).filter(
+        models.UserProfile.email == record.email
+    ).first()
+    if profile:
+        profile.email_verified = True
+        db.commit()
+        return {"status": "success", "message": "Email verified successfully"}
+    else:
+        db.commit()
+        raise HTTPException(status_code=404, detail="User profile not found for this email")
+
+
+@app.post("/api/auth/forgot-password/send-otp")
+def forgot_password_send_otp(body: schemas.OTPRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    import random
+    from datetime import datetime, timedelta
+
+    email = body.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+
+    # 1. Verify user profile exists in database
+    profile = db.query(models.UserProfile).filter(
+        models.UserProfile.email == email
+    ).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="No account found with this email address.")
+    
+    if profile.provider == "google":
+        raise HTTPException(status_code=400, detail="This account is registered via Google. Please log in using Google.")
+
+    # 2. Cooldown check: prevent resend within 60 seconds
+    recent = db.query(models.PasswordResetOTP).filter(
+        models.PasswordResetOTP.email == email,
+        models.PasswordResetOTP.verified == False,
+        models.PasswordResetOTP.created_at >= datetime.utcnow() - timedelta(seconds=60)
+    ).first()
+    if recent:
+        raise HTTPException(status_code=429, detail="Please wait before requesting a new OTP")
+
+    # 3. Generate 6-digit OTP code
+    otp_code = str(random.randint(100000, 999999))
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
+
+    # 4. Store OTP in database
+    otp_record = models.PasswordResetOTP(
+        email=email,
+        otp_code=otp_code,
+        expires_at=expires_at,
+        verified=False
+    )
+    db.add(otp_record)
+    db.commit()
+
+    # 5. Send OTP Email using Resend
+    email_subject = "Your Promptro Password Reset Code"
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Reset Your Promptro Password</title>
+  <style>
+    body {{
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f6f5fa;
+      color: #171421;
+      margin: 0;
+      padding: 0;
+    }}
+    .container {{
+      max-width: 600px;
+      margin: 40px auto;
+      background: #ffffff;
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+      border: 1px solid #e9e2f3;
+    }}
+    .header {{
+      background: linear-gradient(135deg, #8b5cf6 0%, #ff6a3d 100%);
+      padding: 40px 20px;
+      text-align: center;
+    }}
+    .header h1 {{
+      color: #ffffff;
+      margin: 0;
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }}
+    .content {{
+      padding: 40px 30px;
+      text-align: center;
+    }}
+    .content h1 {{
+      font-size: 24px;
+      font-weight: 800;
+      margin-bottom: 16px;
+      color: #171421;
+    }}
+    .content p {{
+      font-size: 14px;
+      line-height: 1.6;
+      color: #5f5774;
+      margin-bottom: 30px;
+    }}
+    .otp-code {{
+      display: inline-block;
+      font-size: 32px;
+      font-weight: 900;
+      color: #8b5cf6;
+      letter-spacing: 0.15em;
+      padding: 12px 36px;
+      background-color: #f3edff;
+      border-radius: 16px;
+      margin: 20px 0;
+      border: 1px dashed #c0a3ff;
+    }}
+    .footer {{
+      background-color: #faf9fc;
+      padding: 24px;
+      text-align: center;
+      font-size: 11px;
+      color: #978eaa;
+      border-top: 1px solid #e9e2f3;
+    }}
+    .footer a {{
+      color: #8b5cf6;
+      text-decoration: none;
+      font-weight: bold;
+    }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Promptro</h1>
+    </div>
+    <div class="content">
+      <h1>Reset Your Password</h1>
+      <p>Hello,</p>
+      <p>We received a request to reset the password for your Promptro account. Use the verification code below to proceed. This code is valid for <strong>10 minutes</strong>.</p>
+      <div class="otp-code">{otp_code}</div>
+      <p>If you did not request a password reset, you can safely ignore this email.</p>
+    </div>
+    <div class="footer">
+      <p>&copy; 2026 Promptro. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
+"""
+    body_text = f"Hello,\n\nYour Promptro password reset verification code is: {otp_code}\n\nThis code will expire in 10 minutes.\nIf you did not request a password reset, please ignore this email.\n\nBest regards,\nPromptro Team"
+
+    try:
+        send_email_background(email, email_subject, body_text, html_content)
+    except Exception as e:
+        db.delete(otp_record)
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Failed to send password reset OTP: {str(e)}")
+
+    return {"status": "sent", "message": "OTP sent to your email"}
+
+
+@app.post("/api/auth/forgot-password/verify-otp")
+def forgot_password_verify_otp(body: schemas.OTPVerify, db: Session = Depends(get_db)):
+    from datetime import datetime
+
+    email = body.email.strip().lower()
+    otp = body.otp.strip()
+
+    if not otp or len(otp) != 6:
+        raise HTTPException(status_code=400, detail="Invalid OTP format")
+
+    # Find the latest unverified OTP for this email
+    otp_record = db.query(models.PasswordResetOTP).filter(
+        models.PasswordResetOTP.email == email,
+        models.PasswordResetOTP.otp_code == otp,
+        models.PasswordResetOTP.verified == False
+    ).order_by(models.PasswordResetOTP.created_at.desc()).first()
+
+    if not otp_record:
+        raise HTTPException(status_code=400, detail="Invalid OTP. Please check and try again.")
+
+    # Check expiry
+    if datetime.utcnow() > otp_record.expires_at.replace(tzinfo=None):
+        raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
+
+    # Mark as verified
+    otp_record.verified = True
+    db.commit()
+
+    return {"status": "verified", "message": "OTP verified successfully. You can now reset your password."}
+
+
+@app.post("/api/auth/forgot-password/reset-password")
+def forgot_password_reset_password(body: schemas.PasswordReset, db: Session = Depends(get_db)):
+    from datetime import datetime, timedelta
+
+    email = body.email.strip().lower()
+    otp = body.otp.strip()
+    new_password = body.new_password
+
+    if len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long.")
+
+    # Check that there is a verified OTP within the last 15 minutes
+    otp_record = db.query(models.PasswordResetOTP).filter(
+        models.PasswordResetOTP.email == email,
+        models.PasswordResetOTP.otp_code == otp,
+        models.PasswordResetOTP.verified == True,
+        models.PasswordResetOTP.created_at >= datetime.utcnow() - timedelta(minutes=15)
+    ).first()
+
+    if not otp_record:
+        raise HTTPException(status_code=400, detail="OTP verification not found or expired. Please verify OTP again.")
+
+    # Firebase update password
+    if not firebase_admin._apps:
+        raise HTTPException(
+            status_code=500,
+            detail="Firebase Admin SDK is not configured."
+        )
+
+    try:
+        firebase_user = firebase_auth.get_user_by_email(email)
+        firebase_auth.update_user(firebase_user.uid, password=new_password)
+    except firebase_auth.UserNotFoundError:
+        raise HTTPException(status_code=404, detail="User not found in authentication system.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reset password: {str(e)}")
+
+    # Clean up OTP record
+    db.delete(otp_record)
+    db.commit()
+
+    return {"status": "success", "message": "Password reset successfully!"}
