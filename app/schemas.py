@@ -189,6 +189,7 @@ class UserProfileCreate(BaseModel):
     first_name: str
     last_name: Optional[str] = None
     gender: Optional[str] = None
+    username: Optional[str] = None
     email: str
     provider: Optional[str] = "email"
     terms_accepted: bool = False
@@ -199,6 +200,7 @@ class UserProfileOut(BaseModel):
     first_name: str
     last_name: Optional[str] = None
     gender: Optional[str] = None
+    username: Optional[str] = None
     email: str
     provider: str
     terms_accepted: bool
@@ -209,6 +211,11 @@ class UserProfileOut(BaseModel):
     class Config:
         from_attributes = True
 
+class UserProfileUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    gender: Optional[str] = None
+    username: Optional[str] = None
 
 class VerificationRequest(BaseModel):
     email: str

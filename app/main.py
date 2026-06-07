@@ -7,24 +7,69 @@ import uuid
 import cloudinary
 import cloudinary.uploader
 import os
+import json
+import base64
 from pathlib import Path
 from dotenv import load_dotenv
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BACKEND_DIR / ".env")
 load_dotenv()
 
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth
 
 # Initialize Firebase Admin SDK
-firebase_key_path = Path(__file__).resolve().parent.parent / "firebase-service-account.json"
-if firebase_key_path.exists():
-    try:
-        cred = credentials.Certificate(str(firebase_key_path))
-        firebase_admin.initialize_app(cred)
-        print("Firebase Admin SDK initialized successfully!")
-    except Exception as e:
-        print(f"Error initializing Firebase Admin SDK: {e}")
-else:
-    print(f"Firebase Service Account Key not found at {firebase_key_path}")
+def _get_firebase_credential():
+    firebase_key_path = BACKEND_DIR / "firebase-service-account.json"
+    if firebase_key_path.exists():
+        return credentials.Certificate(str(firebase_key_path)), f"file:{firebase_key_path}"
+
+    service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if service_account_json:
+        return credentials.Certificate(json.loads(service_account_json)), "env:FIREBASE_SERVICE_ACCOUNT_JSON"
+
+    service_account_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
+    if service_account_b64:
+        decoded = base64.b64decode(service_account_b64).decode("utf-8")
+        return credentials.Certificate(json.loads(decoded)), "env:FIREBASE_SERVICE_ACCOUNT_B64"
+
+    project_id = os.getenv("FIREBASE_PROJECT_ID")
+    client_email = os.getenv("FIREBASE_CLIENT_EMAIL")
+    private_key = os.getenv("FIREBASE_PRIVATE_KEY")
+    if project_id and client_email and private_key:
+        private_key = private_key.strip().strip('"').replace("\\n", "\n")
+        return credentials.Certificate({
+            "type": "service_account",
+            "project_id": project_id,
+            "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID", ""),
+            "private_key": private_key,
+            "client_email": client_email,
+            "client_id": os.getenv("FIREBASE_CLIENT_ID", ""),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_CERT_URL", ""),
+            "universe_domain": "googleapis.com",
+        }), "env:FIREBASE_*"
+
+    return None, None
+
+
+try:
+    if not firebase_admin._apps:
+        cred, cred_source = _get_firebase_credential()
+        if cred:
+            firebase_admin.initialize_app(cred)
+            print(f"Firebase Admin SDK initialized successfully from {cred_source}!")
+        else:
+            print(
+                "Firebase Admin SDK not initialized. Provide backend/firebase-service-account.json, "
+                "FIREBASE_SERVICE_ACCOUNT_JSON, FIREBASE_SERVICE_ACCOUNT_B64, or FIREBASE_PROJECT_ID/"
+                "FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY."
+            )
+except Exception as e:
+    print(f"Error initializing Firebase Admin SDK: {e}")
 
 from app import models, schemas
 from app.database import engine, get_db
@@ -379,6 +424,10 @@ def send_email_background(to_email: str, subject: str, body: str, html: str = No
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "Promptro API is running"}
+
+@app.head("/")
+def head_root():
+    return Response(status_code=200)
 
 @app.get("/api/prompts", response_model=list[schemas.PromptOut])
 def get_prompts(skip: int = 0, limit: int = None, category: str = None, db: Session = Depends(get_db)):
@@ -1730,10 +1779,51 @@ def forgot_password(body: schemas.OTPRequest, request: Request, background_tasks
     if profile.provider == "google":
         raise HTTPException(status_code=400, detail="This account is registered via Google. Please log in using Google.")
 
-    # 2. Check if Firebase Admin is initialized
+    # 2. Generate password reset link via Firebase Admin SDK
+    if not firebase_admin._apps:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Firebase Admin SDK is not configured on the backend. "
+                "Add a Firebase service account JSON file or FIREBASE_* environment variables."
+            )
+        )
+
     try:
-        # Generate password reset link via Firebase Admin SDK
+        try:
+            firebase_user = firebase_auth.get_user_by_email(email)
+        except firebase_auth.UserNotFoundError:
+            display_name = " ".join(
+                part for part in [profile.first_name, profile.last_name] if part
+            ) or email.split("@")[0]
+            previous_uid = profile.firebase_uid
+            firebase_user = firebase_auth.create_user(
+                email=email,
+                display_name=display_name,
+                email_verified=bool(profile.email_verified),
+            )
+            profile.firebase_uid = firebase_user.uid
+            if previous_uid and previous_uid != firebase_user.uid:
+                db.query(models.UserActivity).filter(
+                    models.UserActivity.user_id == previous_uid
+                ).update({models.UserActivity.user_id: firebase_user.uid})
+                db.query(models.UserConsent).filter(
+                    models.UserConsent.user_id == previous_uid
+                ).update({models.UserConsent.user_id: firebase_user.uid})
+                db.query(models.SavedPrompt).filter(
+                    models.SavedPrompt.user_id == previous_uid
+                ).update({models.SavedPrompt.user_id: firebase_user.uid})
+            db.commit()
+
+        provider_ids = {provider.provider_id for provider in firebase_user.provider_data}
+        if provider_ids and "password" not in provider_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="This email is registered with a social login provider. Please log in using the original sign-in method."
+            )
         reset_link = firebase_auth.generate_password_reset_link(email)
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Failed to generate Firebase password reset link: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate password reset request: {str(e)}")
