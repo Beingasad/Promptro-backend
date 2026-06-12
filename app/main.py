@@ -158,8 +158,14 @@ async def lifespan(app: FastAPI):
         print(f"Error generating static SEO files on startup: {e}")
     yield
 
+class CachedStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
 app = FastAPI(title="Promptro API", lifespan=lifespan)
-app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+app.mount("/uploads", CachedStaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 # Configure CORS
 allow_origins = [
