@@ -19,6 +19,7 @@ class Prompt(Base):
     trending = Column(Boolean, default=False)
     visibility = Column(String, default="Public")
     aspect_ratio = Column(String, nullable=True)
+    images = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Category(Base):

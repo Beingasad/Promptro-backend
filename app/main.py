@@ -99,6 +99,14 @@ def ensure_runtime_schema():
                 }
                 if "collections" not in activity_cols:
                     conn.execute(text("ALTER TABLE user_activities ADD COLUMN collections JSON"))
+
+                # Check prompts for images column
+                prompt_cols = {
+                    row[1]
+                    for row in conn.execute(text("PRAGMA table_info(prompts)")).fetchall()
+                }
+                if "images" not in prompt_cols:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN images JSON"))
             else:
                 conn.execute(text("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS username VARCHAR"))
                 conn.execute(text(
@@ -110,6 +118,11 @@ def ensure_runtime_schema():
                     conn.execute(text("ALTER TABLE user_activities ADD COLUMN IF NOT EXISTS collections JSON"))
                 except Exception as ex:
                     print(f"Failed to add collections column in non-sqlite DB (might already exist): {ex}")
+
+                try:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN IF NOT EXISTS images JSON"))
+                except Exception as ex:
+                    print(f"Failed to add images column in non-sqlite DB (might already exist): {ex}")
     except Exception as e:
         print(f"Runtime schema check failed: {e}")
 
@@ -527,16 +540,43 @@ async def create_prompt(
     aspectRatio: str = Form(None),
     image_url: str = Form(None),
     image: UploadFile | None = File(None),
+    images: list[UploadFile] | None = File(None),
+    image_urls: str = Form(None),
     db: Session = Depends(get_db)
 ):
     try:
         is_featured = featured.lower() == "true"
         is_trending = trending.lower() == "true"
         
-        final_image_url = image_url or "https://images.unsplash.com/photo-1605806616949-1e87b487cb2a?q=80&w=1000&auto=format&fit=crop"
-        
+        urls_list = []
+        if image_urls:
+            try:
+                import json
+                parsed = json.loads(image_urls)
+                if isinstance(parsed, list):
+                    urls_list = [str(u).strip() for u in parsed if u]
+            except Exception:
+                urls_list = [u.strip() for u in image_urls.split(",") if u.strip()]
+
+        uploaded_urls = []
         if image and image.filename:
-            final_image_url = await resolve_image_url(image, final_image_url)
+            url = await resolve_image_url(image)
+            if url:
+                uploaded_urls.append(url)
+
+        if images:
+            for img_file in images:
+                if img_file.filename:
+                    url = await resolve_image_url(img_file)
+                    if url:
+                        uploaded_urls.append(url)
+
+        final_images_list = urls_list + uploaded_urls
+        if not final_images_list:
+            final_image_url = image_url or "https://images.unsplash.com/photo-1605806616949-1e87b487cb2a?q=80&w=1000&auto=format&fit=crop"
+            final_images_list = [final_image_url]
+        else:
+            final_image_url = final_images_list[0]
 
         tag_list = [tag.strip() for tag in tags.split(",")] if tags else []
 
@@ -549,6 +589,7 @@ async def create_prompt(
             model=model,
             tags=tag_list,
             image_url=final_image_url,
+            images=final_images_list,
             aspect_ratio=aspectRatio,
             featured=is_featured,
             trending=is_trending,
@@ -557,7 +598,7 @@ async def create_prompt(
         db.add(db_prompt)
         db.commit()
         db.refresh(db_prompt)
-        print(f"DEBUG: Saved prompt to DB with image_url: {db_prompt.image_url}")
+        print(f"DEBUG: Saved prompt to DB with image_url: {db_prompt.image_url} and images: {db_prompt.images}")
         
         # Update static SEO files
         try:
@@ -585,6 +626,8 @@ async def update_prompt(
     aspectRatio: str = Form(None),
     image_url: str = Form(None),
     image: UploadFile | None = File(None),
+    images: list[UploadFile] | None = File(None),
+    image_urls: str = Form(None),
     db: Session = Depends(get_db)
 ):
     try:
@@ -608,14 +651,44 @@ async def update_prompt(
         if aspectRatio is not None:
             prompt.aspect_ratio = aspectRatio
         
+        urls_list = None
+        if image_urls is not None:
+            try:
+                import json
+                parsed = json.loads(image_urls)
+                if isinstance(parsed, list):
+                    urls_list = [str(u).strip() for u in parsed if u]
+            except Exception:
+                urls_list = [u.strip() for u in image_urls.split(",") if u.strip()]
+
+        uploaded_urls = []
         if image and image.filename:
-            prompt.image_url = await resolve_image_url(image, prompt.image_url)
+            url = await resolve_image_url(image)
+            if url:
+                uploaded_urls.append(url)
+
+        if images:
+            for img_file in images:
+                if img_file.filename:
+                    url = await resolve_image_url(img_file)
+                    if url:
+                        uploaded_urls.append(url)
+
+        if urls_list is not None or uploaded_urls:
+            base_urls = urls_list if urls_list is not None else (prompt.images or [prompt.image_url] if prompt.image_url else [])
+            final_images_list = base_urls + uploaded_urls
+            final_images_list = [u for u in final_images_list if u]
+            
+            if final_images_list:
+                prompt.images = final_images_list
+                prompt.image_url = final_images_list[0]
         elif image_url:
             prompt.image_url = image_url
+            prompt.images = [image_url]
 
         db.commit()
         db.refresh(prompt)
-        print(f"DEBUG: Updated prompt in DB with image_url: {prompt.image_url}")
+        print(f"DEBUG: Updated prompt in DB with image_url: {prompt.image_url} and images: {prompt.images}")
         
         # Update static SEO files
         try:

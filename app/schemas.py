@@ -12,6 +12,7 @@ class PromptBase(BaseModel):
     aspect_ratio: Optional[str] = None
     trending: Optional[bool] = False
     visibility: Optional[str] = "Public"
+    images: Optional[List[str]] = None
 
 class PromptCreate(PromptBase):
     pass
