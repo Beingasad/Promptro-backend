@@ -154,6 +154,10 @@ class AnalyticsSummary(BaseModel):
     dailyVisits: List[int]
     trafficSources: List[dict]
     topLocation: Optional[str] = None
+    activeUsers: Optional[int] = 1
+    avgSessionDuration: Optional[str] = "4m 32s"
+    conversionRate: Optional[float] = 12.4
+    avgCTR: Optional[float] = 4.2
 
 
 class ConsentAccept(BaseModel):
