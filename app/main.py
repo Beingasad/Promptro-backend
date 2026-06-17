@@ -559,19 +559,33 @@ async def create_prompt(
                 urls_list = [u.strip() for u in image_urls.split(",") if u.strip()]
 
         uploaded_urls = []
+        uploaded_filenames = set()
+
         if image and image.filename:
             url = await resolve_image_url(image)
             if url:
                 uploaded_urls.append(url)
+                uploaded_filenames.add(image.filename)
 
         if images:
             for img_file in images:
-                if img_file.filename:
+                if img_file.filename and img_file.filename not in uploaded_filenames:
                     url = await resolve_image_url(img_file)
                     if url:
                         uploaded_urls.append(url)
+                        uploaded_filenames.add(img_file.filename)
 
         final_images_list = urls_list + uploaded_urls
+        
+        # De-duplicate final images list in order
+        seen = set()
+        deduped = []
+        for u in final_images_list:
+            if u and u not in seen:
+                seen.add(u)
+                deduped.append(u)
+        final_images_list = deduped
+
         if not final_images_list:
             final_image_url = image_url or "https://images.unsplash.com/photo-1605806616949-1e87b487cb2a?q=80&w=1000&auto=format&fit=crop"
             final_images_list = [final_image_url]
@@ -662,23 +676,36 @@ async def update_prompt(
                 urls_list = [u.strip() for u in image_urls.split(",") if u.strip()]
 
         uploaded_urls = []
+        uploaded_filenames = set()
+
         if image and image.filename:
             url = await resolve_image_url(image)
             if url:
                 uploaded_urls.append(url)
+                uploaded_filenames.add(image.filename)
 
         if images:
             for img_file in images:
-                if img_file.filename:
+                if img_file.filename and img_file.filename not in uploaded_filenames:
                     url = await resolve_image_url(img_file)
                     if url:
                         uploaded_urls.append(url)
+                        uploaded_filenames.add(img_file.filename)
 
         if urls_list is not None or uploaded_urls:
             base_urls = urls_list if urls_list is not None else (prompt.images or [prompt.image_url] if prompt.image_url else [])
             final_images_list = base_urls + uploaded_urls
             final_images_list = [u for u in final_images_list if u]
             
+            # De-duplicate final images list in order
+            seen = set()
+            deduped = []
+            for u in final_images_list:
+                if u and u not in seen:
+                    seen.add(u)
+                    deduped.append(u)
+            final_images_list = deduped
+
             if final_images_list:
                 prompt.images = final_images_list
                 prompt.image_url = final_images_list[0]
