@@ -207,9 +207,9 @@ async def add_security_headers(request: Request, call_next):
         "default-src 'self' https:; "
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
         "style-src 'self' 'unsafe-inline' https:; "
-        "img-src 'self' data: https:; "
+        "img-src 'self' data: blob: https: http://localhost:* http://127.0.0.1:*; "
         "font-src 'self' data: https:; "
-        "connect-src 'self' https:; "
+        "connect-src 'self' https: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; "
         "frame-ancestors 'none';"
     )
     response.headers["X-Frame-Options"] = "DENY"
