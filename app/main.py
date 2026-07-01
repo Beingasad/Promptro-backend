@@ -199,6 +199,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Custom middleware to add secure headers to all API responses
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self' https:; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
+        "style-src 'self' 'unsafe-inline' https:; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' data: https:; "
+        "connect-src 'self' https:; "
+        "frame-ancestors 'none';"
+    )
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
 # Configure Cloudinary
 # Prioritize individual keys, fallback to CLOUDINARY_URL
 cloudinary_cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
