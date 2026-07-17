@@ -6,6 +6,8 @@ class PromptBase(BaseModel):
     title: str
     prompt_text: str
     negative_prompt: Optional[str] = None
+    advanced_prompt: Optional[str] = None
+    professional_prompt: Optional[str] = None
     category: str
     tags: Optional[List[str]] = []
     model: str
@@ -20,6 +22,8 @@ class PromptCreate(PromptBase):
 class PromptUpdate(PromptBase):
     title: Optional[str] = None
     prompt_text: Optional[str] = None
+    advanced_prompt: Optional[str] = None
+    professional_prompt: Optional[str] = None
     category: Optional[str] = None
     model: Optional[str] = None
     aspect_ratio: Optional[str] = None
@@ -29,6 +33,8 @@ class PromptOut(PromptBase):
     image_url: str
     likes: int
     views: int
+    copies: int
+    saves: int
     featured: bool
     created_at: datetime
 

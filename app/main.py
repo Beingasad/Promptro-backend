@@ -107,6 +107,14 @@ def ensure_runtime_schema():
                 }
                 if "images" not in prompt_cols:
                     conn.execute(text("ALTER TABLE prompts ADD COLUMN images JSON"))
+                if "copies" not in prompt_cols:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN copies INTEGER DEFAULT 0"))
+                if "saves" not in prompt_cols:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN saves INTEGER DEFAULT 0"))
+                if "advanced_prompt" not in prompt_cols:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN advanced_prompt TEXT"))
+                if "professional_prompt" not in prompt_cols:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN professional_prompt TEXT"))
             else:
                 conn.execute(text("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS username VARCHAR"))
                 conn.execute(text(
@@ -123,6 +131,18 @@ def ensure_runtime_schema():
                     conn.execute(text("ALTER TABLE prompts ADD COLUMN IF NOT EXISTS images JSON"))
                 except Exception as ex:
                     print(f"Failed to add images column in non-sqlite DB (might already exist): {ex}")
+                try:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN IF NOT EXISTS copies INTEGER DEFAULT 0"))
+                except Exception: pass
+                try:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN IF NOT EXISTS saves INTEGER DEFAULT 0"))
+                except Exception: pass
+                try:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN IF NOT EXISTS advanced_prompt TEXT"))
+                except Exception: pass
+                try:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN IF NOT EXISTS professional_prompt TEXT"))
+                except Exception: pass
     except Exception as e:
         print(f"Runtime schema check failed: {e}")
 
@@ -549,6 +569,8 @@ async def create_prompt(
     title: str = Form(...),
     prompt_text: str = Form(...),
     negative_prompt: str = Form(None),
+    advanced_prompt: str = Form(None),
+    professional_prompt: str = Form(None),
     category: str = Form(...),
     model: str = Form(...),
     tags: str = Form(None),
@@ -617,6 +639,8 @@ async def create_prompt(
             title=title,
             prompt_text=prompt_text,
             negative_prompt=negative_prompt,
+            advanced_prompt=advanced_prompt,
+            professional_prompt=professional_prompt,
             category=category,
             model=model,
             tags=tag_list,
@@ -649,6 +673,8 @@ async def update_prompt(
     title: str = Form(None),
     prompt_text: str = Form(None),
     negative_prompt: str = Form(None),
+    advanced_prompt: str = Form(None),
+    professional_prompt: str = Form(None),
     category: str = Form(None),
     model: str = Form(None),
     tags: str = Form(None),
@@ -670,6 +696,8 @@ async def update_prompt(
         if title is not None: prompt.title = title
         if prompt_text is not None: prompt.prompt_text = prompt_text
         if negative_prompt is not None: prompt.negative_prompt = negative_prompt
+        if advanced_prompt is not None: prompt.advanced_prompt = advanced_prompt
+        if professional_prompt is not None: prompt.professional_prompt = professional_prompt
         if category is not None: prompt.category = category
         if model is not None: prompt.model = model
         if tags is not None:
@@ -756,6 +784,32 @@ def like_prompt(prompt_id: str, liked: bool = Form(...), db: Session = Depends(g
         prompt.likes += 1
     else:
         prompt.likes = max(0, prompt.likes - 1)
+
+    db.commit()
+    db.refresh(prompt)
+    return prompt
+
+@app.post("/api/prompts/{prompt_id}/copy", response_model=schemas.PromptOut)
+def copy_prompt(prompt_id: str, db: Session = Depends(get_db)):
+    prompt = db.query(models.Prompt).filter(models.Prompt.id == prompt_id).first()
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+
+    prompt.copies += 1
+    db.commit()
+    db.refresh(prompt)
+    return prompt
+
+@app.post("/api/prompts/{prompt_id}/save", response_model=schemas.PromptOut)
+def save_prompt_count(prompt_id: str, saved: bool = Form(...), db: Session = Depends(get_db)):
+    prompt = db.query(models.Prompt).filter(models.Prompt.id == prompt_id).first()
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+
+    if saved:
+        prompt.saves += 1
+    else:
+        prompt.saves = max(0, prompt.saves - 1)
 
     db.commit()
     db.refresh(prompt)
