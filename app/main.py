@@ -115,6 +115,10 @@ def ensure_runtime_schema():
                     conn.execute(text("ALTER TABLE prompts ADD COLUMN advanced_prompt TEXT"))
                 if "professional_prompt" not in prompt_cols:
                     conn.execute(text("ALTER TABLE prompts ADD COLUMN professional_prompt TEXT"))
+                if "base_quality_score" not in prompt_cols:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN base_quality_score INTEGER DEFAULT 70"))
+                if "final_quality_score" not in prompt_cols:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN final_quality_score INTEGER DEFAULT 70"))
             else:
                 conn.execute(text("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS username VARCHAR"))
                 conn.execute(text(
@@ -143,10 +147,27 @@ def ensure_runtime_schema():
                 try:
                     conn.execute(text("ALTER TABLE prompts ADD COLUMN IF NOT EXISTS professional_prompt TEXT"))
                 except Exception: pass
+                try:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN IF NOT EXISTS base_quality_score INTEGER DEFAULT 70"))
+                except Exception: pass
+                try:
+                    conn.execute(text("ALTER TABLE prompts ADD COLUMN IF NOT EXISTS final_quality_score INTEGER DEFAULT 70"))
+                except Exception: pass
     except Exception as e:
         print(f"Runtime schema check failed: {e}")
 
 ensure_runtime_schema()
+
+def calculate_dynamic_score(prompt):
+    base_score = prompt.base_quality_score if prompt.base_quality_score is not None else 70
+    b_pts = (base_score / 100.0) * 70.0
+    c_pts = min(((prompt.copies or 0) / 50.0) * 10.0, 10.0)
+    l_pts = min(((prompt.likes or 0) / 100.0) * 8.0, 8.0)
+    s_pts = min(((prompt.saves or 0) / 50.0) * 7.0, 7.0)
+    v_pts = min(((prompt.views or 0) / 500.0) * 5.0, 5.0)
+    final_score = int(b_pts + c_pts + l_pts + s_pts + v_pts)
+    prompt.final_quality_score = min(final_score, 100)
+
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -559,6 +580,7 @@ def get_prompt(prompt_id: str, db: Session = Depends(get_db)):
     
     # Increment views
     prompt.views += 1
+    calculate_dynamic_score(prompt)
     db.commit()
     db.refresh(prompt)
     
@@ -578,6 +600,7 @@ async def create_prompt(
     trending: str = Form("false"),
     visibility: str = Form("Public"),
     aspectRatio: str = Form(None),
+    base_quality_score: int = Form(70),
     image_url: str = Form(None),
     image: UploadFile | None = File(None),
     images: list[UploadFile] | None = File(None),
@@ -649,8 +672,11 @@ async def create_prompt(
             aspect_ratio=aspectRatio,
             featured=is_featured,
             trending=is_trending,
-            visibility=visibility
+            visibility=visibility,
+            base_quality_score=base_quality_score,
+            final_quality_score=base_quality_score
         )
+        calculate_dynamic_score(db_prompt)
         db.add(db_prompt)
         db.commit()
         db.refresh(db_prompt)
@@ -682,6 +708,7 @@ async def update_prompt(
     trending: str = Form(None),
     visibility: str = Form(None),
     aspectRatio: str = Form(None),
+    base_quality_score: int = Form(None),
     image_url: str = Form(None),
     image: UploadFile | None = File(None),
     images: list[UploadFile] | None = File(None),
@@ -710,6 +737,8 @@ async def update_prompt(
             prompt.visibility = visibility
         if aspectRatio is not None:
             prompt.aspect_ratio = aspectRatio
+        if base_quality_score is not None:
+            prompt.base_quality_score = base_quality_score
         
         urls_list = None
         if image_urls is not None:
@@ -759,6 +788,7 @@ async def update_prompt(
             prompt.image_url = image_url
             prompt.images = [image_url]
 
+        calculate_dynamic_score(prompt)
         db.commit()
         db.refresh(prompt)
         print(f"DEBUG: Updated prompt in DB with image_url: {prompt.image_url} and images: {prompt.images}")
@@ -785,6 +815,7 @@ def like_prompt(prompt_id: str, liked: bool = Form(...), db: Session = Depends(g
     else:
         prompt.likes = max(0, prompt.likes - 1)
 
+    calculate_dynamic_score(prompt)
     db.commit()
     db.refresh(prompt)
     return prompt
@@ -796,6 +827,7 @@ def copy_prompt(prompt_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Prompt not found")
 
     prompt.copies += 1
+    calculate_dynamic_score(prompt)
     db.commit()
     db.refresh(prompt)
     return prompt
@@ -811,6 +843,7 @@ def save_prompt_count(prompt_id: str, saved: bool = Form(...), db: Session = Dep
     else:
         prompt.saves = max(0, prompt.saves - 1)
 
+    calculate_dynamic_score(prompt)
     db.commit()
     db.refresh(prompt)
     return prompt

@@ -24,6 +24,8 @@ class Prompt(Base):
     visibility = Column(String, default="Public")
     aspect_ratio = Column(String, nullable=True)
     images = Column(JSON, nullable=True)
+    base_quality_score = Column(Integer, default=70)
+    final_quality_score = Column(Integer, default=70)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Category(Base):

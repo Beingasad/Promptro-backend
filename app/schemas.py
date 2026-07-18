@@ -15,6 +15,7 @@ class PromptBase(BaseModel):
     trending: Optional[bool] = False
     visibility: Optional[str] = "Public"
     images: Optional[List[str]] = None
+    base_quality_score: Optional[int] = 70
 
 class PromptCreate(PromptBase):
     pass
@@ -27,6 +28,7 @@ class PromptUpdate(PromptBase):
     category: Optional[str] = None
     model: Optional[str] = None
     aspect_ratio: Optional[str] = None
+    base_quality_score: Optional[int] = None
 
 class PromptOut(PromptBase):
     id: str
@@ -37,6 +39,7 @@ class PromptOut(PromptBase):
     saves: int
     featured: bool
     created_at: datetime
+    final_quality_score: int
 
     class Config:
         from_attributes = True
