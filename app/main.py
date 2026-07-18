@@ -159,13 +159,16 @@ def ensure_runtime_schema():
 ensure_runtime_schema()
 
 def calculate_dynamic_score(prompt):
-    base_score = prompt.base_quality_score if prompt.base_quality_score is not None else 70
-    b_pts = (base_score / 100.0) * 70.0
+    # Default to 60 (Standard) if no base score is set to avoid new prompts being 'Verified' instantly.
+    base_score = prompt.base_quality_score if prompt.base_quality_score is not None else 60
+    
+    # Bonus points for engagement
     c_pts = min(((prompt.copies or 0) / 50.0) * 10.0, 10.0)
     l_pts = min(((prompt.likes or 0) / 100.0) * 8.0, 8.0)
     s_pts = min(((prompt.saves or 0) / 50.0) * 7.0, 7.0)
     v_pts = min(((prompt.views or 0) / 500.0) * 5.0, 5.0)
-    final_score = int(b_pts + c_pts + l_pts + s_pts + v_pts)
+    
+    final_score = int(base_score + c_pts + l_pts + s_pts + v_pts)
     prompt.final_quality_score = min(final_score, 100)
 
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
